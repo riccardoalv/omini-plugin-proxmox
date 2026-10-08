@@ -538,7 +538,11 @@ def guest_device(
         os_version=(LXC_OS if kind == "lxc" else QEMU_OS).get(ostype),
         uptime_s=counter(row.get("uptime")),
         cpu_pct=fraction_pct(row.get("cpu")),
-        mem_pct=pct(row.get("mem"), row.get("maxmem")),
+        # A VM's memory as the host sees it includes the guest's own caches (a
+        # TrueNAS with its ZFS cache shows 100 %): not a measure of how full it
+        # is, so only what it was given is reported. Containers share the
+        # host's kernel: their use is real.
+        mem_pct=pct(row.get("mem"), row.get("maxmem")) if kind == "lxc" else None,
         storage=disk or None,
         macs=sorted({n.mac for n in nics}),
         ips=ips or None,
@@ -548,7 +552,7 @@ def guest_device(
             Device,
             cpu_count=counter(row.get("cpus") or row.get("maxcpu")) or None,
             mem_total_bytes=counter(row.get("maxmem")),
-            mem_used_bytes=counter(row.get("mem")),
+            mem_used_bytes=counter(row.get("mem")) if kind == "lxc" else None,
         ),
     )
 

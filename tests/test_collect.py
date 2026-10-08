@@ -70,7 +70,7 @@ def test_vm_hangs_under_its_node(pve, cfg):
     assert vm.os_version == "Linux"
     assert [m.root for m in vm.macs] == ["bc:24:11:aa:00:01", "bc:24:11:aa:00:02"]
     assert vm.ips == ["192.168.1.20"] and vm.host == "192.168.1.20"  # from the guest agent
-    assert vm.cpu_pct == 4.2 and vm.mem_pct == 50.0 and vm.uptime_s == 86400
+    assert vm.cpu_pct == 4.2 and vm.mem_pct is None and vm.uptime_s == 86400
     [nb] = vm.neighbors
     assert (nb.protocol, nb.local_port, nb.remote_port) == ("other", "net0", "vmbr0")
     assert (nb.remote_name, nb.remote_mac, nb.remote_ip) == (
@@ -228,7 +228,9 @@ def test_cpus_and_memory_of_nodes_and_guests(pve, cfg):
     assert node.cpu_count == 6
     assert node.mem_total_bytes and node.mem_used_bytes is not None
     vm = devices["homeassistant"]
-    assert (vm.cpu_count, vm.mem_used_bytes, vm.mem_total_bytes) == (2, 2147483648, 4294967296)
-    assert vm.mem_pct == 50
+    # A VM: only the memory it was given (the host's view counts its caches).
+    assert (vm.cpu_count, vm.mem_total_bytes) == (2, 4294967296)
+    assert vm.mem_used_bytes is None and vm.mem_pct is None
     ct = devices["jellyfin"]
-    assert (ct.cpu_count, ct.mem_total_bytes) == (2, 2147483648)
+    assert (ct.cpu_count, ct.mem_total_bytes, ct.mem_used_bytes) == (2, 2147483648, 536870912)
+    assert ct.mem_pct == 25
