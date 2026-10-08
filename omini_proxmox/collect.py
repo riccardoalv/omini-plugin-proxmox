@@ -645,6 +645,15 @@ def connected_ip(c: Client) -> str | None:
 # --- plugin entry points -------------------------------------------------------
 
 
+# Proxmox VE filters guest lists by permission: a token without VM.Audit gets
+# an empty list, not an error.
+NO_GUESTS = (
+    "No running VMs or containers visible: if there are some, the API token cannot "
+    "see them (it needs VM.Audit: role PVEAuditor on / with Propagate, given to the "
+    "token itself when privilege separation is on)"
+)
+
+
 def collect(cfg: Config) -> list[Device]:
     c = client_from(cfg)
     try:
@@ -668,6 +677,8 @@ def collect(cfg: Config) -> list[Device]:
                     raise
                 except Exception:  # one node failing never breaks the others
                     log.exception("could not read node %s", name)
+        if not any(d.neighbors for d in devices):
+            log.warning(NO_GUESTS)
         if missing:
             log.warning("missing privileges: %s", ", ".join(sorted(set(missing))))
         return devices
@@ -691,6 +702,8 @@ def test(cfg: Config) -> str:
             f"Connected to {label}: {len(online)} node{'s' if len(online) != 1 else ''}, "
             f"{guests} running guest{'s' if guests != 1 else ''}"
         )
+        if not guests:
+            msg += ". " + NO_GUESTS
         if missing:
             msg += ". Missing privileges: " + "; ".join(sorted(set(missing)))
         return msg

@@ -210,3 +210,13 @@ def test_unreachable_host(cfg):
     cfg["url"] = "https://127.0.0.1:9"
     with pytest.raises(PluginError, match="cannot connect"):
         connection_test(cfg)
+
+
+def test_no_visible_guests_says_why(pve, cfg):
+    # Proxmox VE filters guest lists by permission: without VM.Audit they are empty.
+    pve.routes["/nodes/pve1/qemu"] = {"data": []}
+    pve.routes["/nodes/pve1/lxc"] = {"data": []}
+    assert list(by_name(collect(cfg))) == ["pve1"]
+    msg = connection_test(cfg)
+    assert "0 running guests. No running VMs or containers visible" in msg
+    assert "VM.Audit" in msg
