@@ -6,13 +6,17 @@ https://pve.proxmox.com/wiki/Proxmox_VE_API
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
-from omini_sdk import PluginError
+from omini_sdk import PluginError, log
 
 DEFAULT_PORT = 8006
+
+# Pause before asking a slow node again.
+RETRY_PAUSE_S = 2.0
 
 
 class Forbidden(Exception):
@@ -56,7 +60,7 @@ class Client:
         token_id: str,
         token_secret: str,
         verify_tls: bool = False,
-        timeout: float = 10,
+        timeout: float = 30,
         transport: httpx.BaseTransport | None = None,
     ):
         self.base = base_url(url)
@@ -77,14 +81,21 @@ class Client:
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """GETs an API path and returns its `data`. Only GETs are ever sent."""
-        try:
-            r = self.http.get(path, params=params)
-        except httpx.ConnectError as e:
-            raise PluginError(f"cannot connect to {self.base}") from e
-        except httpx.TimeoutException as e:
-            raise PluginError(f"{self.base} did not answer in time") from e
-        except httpx.HTTPError as e:
-            raise PluginError(f"request to {self.base} failed ({type(e).__name__})") from e
+        # A node busy for a moment: a read is tried once more, after a pause.
+        for attempt in range(2):
+            try:
+                r = self.http.get(path, params=params)
+                break
+            except httpx.ConnectError as e:
+                raise PluginError(f"cannot connect to {self.base}") from e
+            except httpx.TimeoutException as e:
+                if attempt == 0:
+                    log.info("%s did not answer %s in time, trying again", self.base, path)
+                    time.sleep(RETRY_PAUSE_S)
+                    continue
+                raise PluginError(f"{self.base} did not answer in time") from e
+            except httpx.HTTPError as e:
+                raise PluginError(f"request to {self.base} failed ({type(e).__name__})") from e
         if r.status_code == 401:
             raise PluginError(
                 "Proxmox VE rejected the API token: check the token ID "

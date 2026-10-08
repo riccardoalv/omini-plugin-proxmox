@@ -234,3 +234,40 @@ def test_cpus_and_memory_of_nodes_and_guests(pve, cfg):
     ct = devices["jellyfin"]
     assert (ct.cpu_count, ct.mem_total_bytes, ct.mem_used_bytes) == (2, 2147483648, 536870912)
     assert ct.mem_pct == 25
+
+
+def test_a_slow_answer_is_asked_again(pve, cfg, monkeypatch):
+    from functools import partial
+
+    import httpx
+
+    import omini_proxmox.client as client_module
+    import omini_proxmox.collect as collect_module
+
+    monkeypatch.setattr(client_module, "RETRY_PAUSE_S", 0)
+    slow = {"/nodes"}  # the first read of the node list times out
+
+    def handler(request):
+        path = request.url.path.removeprefix("/api2/json")
+        if path in slow:
+            slow.discard(path)
+            raise httpx.ReadTimeout("slow", request=request)
+        return pve.handler(request)
+
+    monkeypatch.setattr(
+        collect_module,
+        "Client",
+        partial(client_module.Client, transport=httpx.MockTransport(handler)),
+    )
+    assert collect(cfg)
+
+
+def test_waits_as_long_as_asked(cfg):
+    from omini_sdk import Config
+
+    from omini_proxmox.collect import wait_s
+
+    assert wait_s(cfg) == 30
+    assert wait_s(Config({"timeout_s": 90}, None)) == 90
+    assert wait_s(Config({"timeout_s": 1}, None)) == 5
+    assert wait_s(Config({"timeout_s": 999}, None)) == 120

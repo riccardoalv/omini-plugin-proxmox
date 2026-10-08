@@ -47,7 +47,18 @@ def client_from(cfg: Config) -> Client:
         raise PluginError("the address, API token ID and API token secret are required")
     if "!" not in token_id or "@" not in token_id.split("!", 1)[0]:
         raise PluginError("the API token ID looks like user@realm!name, e.g. omini@pve!omini")
-    return Client(url, token_id.strip(), secret.strip(), verify_tls=cfg.bool("verify_tls", False))
+    return Client(
+        url,
+        token_id.strip(),
+        secret.strip(),
+        verify_tls=cfg.bool("verify_tls", False),
+        timeout=wait_s(cfg),
+    )
+
+
+def wait_s(cfg: Config) -> float:
+    """How long to wait for each answer: the "timeout_s" field, 5 to 120 s."""
+    return float(min(max(cfg.int("timeout_s", 30) or 30, 5), 120))
 
 
 # --- parsing helpers -------------------------------------------------------

@@ -2,7 +2,7 @@
 # own copy of omini-sdk to the plugin's environment.
 [project]
 name = "omini-plugin-proxmox"
-version = "0.2.0"
+version = "0.2.1"
 description = "Omini plugin for Proxmox VE"
 license = "MIT"
 requires-python = ">=3.10"

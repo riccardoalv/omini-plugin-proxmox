@@ -1,9 +1,9 @@
 id: proxmox
 name: Proxmox VE
-version: 0.2.0
+version: 0.2.1
 protocol: 1
 entrypoint: main.py
-timeout_s: 120
+timeout_s: 240
 description: >-
   Proxmox VE hosts (a single node or a whole cluster) through the official REST
   API with a read-only API token: CPU, memory, swap, load, storage, uptime,
@@ -36,3 +36,9 @@ fields:
     label: Verify the TLS certificate
     default: false
     help: Proxmox VE uses a self-signed certificate by default; turn this on if yours is trusted.
+  - key: timeout_s
+    type: int
+    label: Wait for an answer (seconds)
+    default: 30
+    group: Advanced
+    help: How long to wait for each answer of the API (5 to 120). A busy node can be slow; raise it if the integration says Proxmox VE did not answer in time.
