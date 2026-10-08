@@ -220,3 +220,15 @@ def test_no_visible_guests_says_why(pve, cfg):
     msg = connection_test(cfg)
     assert "0 running guests. No running VMs or containers visible" in msg
     assert "VM.Audit" in msg
+
+
+def test_cpus_and_memory_of_nodes_and_guests(pve, cfg):
+    devices = by_name(collect(cfg))
+    node = devices["pve1"]
+    assert node.cpu_count == 6
+    assert node.mem_total_bytes and node.mem_used_bytes is not None
+    vm = devices["homeassistant"]
+    assert (vm.cpu_count, vm.mem_used_bytes, vm.mem_total_bytes) == (2, 2147483648, 4294967296)
+    assert vm.mem_pct == 50
+    ct = devices["jellyfin"]
+    assert (ct.cpu_count, ct.mem_total_bytes) == (2, 2147483648)

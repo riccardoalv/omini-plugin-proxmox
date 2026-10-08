@@ -101,6 +101,12 @@ def fraction_pct(value: Any) -> float | None:
     return None if n is None else round(min(max(n * 100, 0), 100), 1)
 
 
+def newer_fields(model: type, **values: Any) -> dict[str, Any]:
+    """Fields an older SDK does not have are left out, so the plugin keeps
+    working on an older Omini."""
+    return {k: v for k, v in values.items() if v is not None and k in model.model_fields}
+
+
 def pve_version(text: Any) -> str | None:
     """'pve-manager/8.2.4/faa83925c9641325' → '8.2.4'."""
     if not isinstance(text, str):
@@ -538,6 +544,12 @@ def guest_device(
         ips=ips or None,
         interfaces=interfaces,
         neighbors=[neighbor],
+        **newer_fields(
+            Device,
+            cpu_count=counter(row.get("cpus") or row.get("maxcpu")) or None,
+            mem_total_bytes=counter(row.get("maxmem")),
+            mem_used_bytes=counter(row.get("mem")),
+        ),
     )
 
 
@@ -601,6 +613,12 @@ def node_devices(
         ips=all_ips or None,
         interfaces=ifaces or None,
         gateways=gateways(rows) or None,
+        **newer_fields(
+            Device,
+            cpu_count=counter(cpuinfo.get("cpus")) or None,
+            mem_total_bytes=counter(memory.get("total")),
+            mem_used_bytes=counter(memory.get("used")),
+        ),
     )
     host = Host(node=node, mac=node_mac, ip=mgmt_ip)
     guests = running_guests(c, node, missing)

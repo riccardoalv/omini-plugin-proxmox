@@ -11,11 +11,11 @@ Read-only: it only sends `GET` requests, and never starts, stops, changes or ref
 | Data | Used for |
 |---|---|
 | Nodes of the cluster (or the single host) and their addresses | One device per node |
-| Per node: CPU, memory, swap, load, uptime, Proxmox VE version, CPU model | Node health |
+| Per node: CPU (% and number of CPUs), memory (% and used of installed), swap, load, uptime, Proxmox VE version, CPU model | Node health |
 | Per node: network interfaces — NICs, bridges, bonds, VLANs, with status, members, IPs, comments, default gateway | Ports of the node |
 | Per node: storage usage (root filesystem + each active storage) | Node health (disks) |
 | Per node: pending updates — only if the token may read them (see below) | Node health |
-| Running VMs (QEMU) and containers (LXC): name, CPU, memory, uptime, OS type, root disk (containers) | One device per guest |
+| Running VMs (QEMU) and containers (LXC): name, CPU (% and vCPUs), memory (% and used of assigned), uptime, OS type, root disk (containers) | One device per guest, with its own health in the device panel |
 | Each guest's network devices (`net0`…`netN`): MAC, bridge, link up/down | Guest MACs, and which node it hangs under |
 | Guest IPs: QEMU guest agent (VMs), container interfaces (LXC), static IPs in the config | Guest addresses |
 | Byte counters of each guest NIC (the host's `tap`/`veth` devices) | Guest traffic |
