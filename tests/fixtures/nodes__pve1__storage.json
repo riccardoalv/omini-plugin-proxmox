@@ -1,0 +1,5 @@
+{"data": [
+  {"storage": "local", "type": "dir", "content": "iso,vztmpl,backup", "active": 1, "enabled": 1, "shared": 0, "total": 100861726720, "used": 12884901888, "avail": 82851074048, "used_fraction": 0.1277},
+  {"storage": "local-lvm", "type": "lvmthin", "content": "images,rootdir", "active": 1, "enabled": 1, "shared": 0, "total": 1862454607872, "used": 465613651968, "avail": 1396840955904, "used_fraction": 0.25},
+  {"storage": "nas-backup", "type": "nfs", "content": "backup", "active": 0, "enabled": 1, "shared": 1, "total": 0, "used": 0, "avail": 0}
+]}

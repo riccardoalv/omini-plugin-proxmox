@@ -1,0 +1,12 @@
+{"data": {
+  "hostname": "jellyfin",
+  "ostype": "debian",
+  "arch": "amd64",
+  "cores": 2,
+  "memory": 2048,
+  "rootfs": "local-lvm:vm-200-disk-0,size=16G",
+  "net0": "name=eth0,bridge=vmbr0,hwaddr=BC:24:11:BB:00:01,ip=dhcp,ip6=auto,type=veth",
+  "net1": "name=eth1,bridge=vmbr1,hwaddr=BC:24:11:BB:00:02,ip=10.0.30.31/24,tag=30,type=veth",
+  "unprivileged": 1,
+  "digest": "fedcba9876543210"
+}}

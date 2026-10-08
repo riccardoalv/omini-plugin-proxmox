@@ -1,0 +1,38 @@
+id: proxmox
+name: Proxmox VE
+version: 0.1.0
+protocol: 1
+entrypoint: main.py
+timeout_s: 120
+description: >-
+  Proxmox VE hosts (a single node or a whole cluster) through the official REST
+  API with a read-only API token: CPU, memory, swap, load, storage, uptime,
+  version and network interfaces of each node, and every running VM and
+  container placed under the node that runs it, with its MACs, IPs, CPU,
+  memory and traffic counters. Read-only.
+author: Omini
+homepage: https://github.com/riccardoalv/omini-plugin-proxmox
+fields:
+  - key: url
+    type: url
+    label: Address
+    required: true
+    help: >-
+      The Proxmox VE web interface, e.g. https://192.168.1.10:8006 (port 8006 is
+      used when none is given). In a cluster, any node: the others are read through it.
+  - key: token_id
+    type: string
+    label: API token ID
+    required: true
+    help: >-
+      User, realm and token name, e.g. omini@pve!omini. Create a user and a token
+      with the PVEAuditor role on / (read-only), as the plugin's README explains.
+  - key: token_secret
+    type: secret
+    label: API token secret
+    required: true
+  - key: verify_tls
+    type: bool
+    label: Verify the TLS certificate
+    default: false
+    help: Proxmox VE uses a self-signed certificate by default; turn this on if yours is trusted.

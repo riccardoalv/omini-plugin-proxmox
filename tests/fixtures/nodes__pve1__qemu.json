@@ -1,0 +1,5 @@
+{"data": [
+  {"vmid": 100, "name": "homeassistant", "status": "running", "qmpstatus": "running", "cpu": 0.0425, "cpus": 2, "mem": 2147483648, "maxmem": 4294967296, "maxdisk": 34359738368, "disk": 0, "uptime": 86400, "netin": 987654321, "netout": 123456789, "pid": 1234, "tags": "home"},
+  {"vmid": 101, "name": "win11", "status": "stopped", "cpu": 0, "cpus": 4, "mem": 0, "maxmem": 8589934592, "uptime": 0},
+  {"vmid": 9000, "name": "debian-template", "status": "stopped", "template": 1, "cpu": 0, "cpus": 1, "mem": 0, "maxmem": 1073741824, "uptime": 0}
+]}

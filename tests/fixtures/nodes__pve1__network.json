@@ -1,0 +1,9 @@
+{"data": [
+  {"iface": "enp1s0", "type": "eth", "method": "manual", "families": ["inet"], "active": 1, "exists": 1, "priority": 3},
+  {"iface": "enp2s0", "type": "eth", "method": "manual", "families": ["inet"], "active": 1, "exists": 1, "priority": 4},
+  {"iface": "enp3s0", "type": "eth", "method": "manual", "families": ["inet"], "exists": 1, "priority": 5},
+  {"iface": "bond0", "type": "bond", "method": "manual", "families": ["inet"], "slaves": "enp2s0 enp3s0", "bond_mode": "802.3ad", "active": 1, "priority": 6},
+  {"iface": "vmbr0", "type": "bridge", "method": "static", "families": ["inet", "inet6"], "address": "192.168.1.10", "netmask": "24", "cidr": "192.168.1.10/24", "gateway": "192.168.1.1", "address6": "fd00::10", "netmask6": 64, "cidr6": "fd00::10/64", "bridge_ports": "enp1s0", "bridge_stp": "off", "bridge_fd": "0", "options": ["hwaddress BC:24:11:00:00:0A"], "comments": "Management\n", "active": 1, "autostart": 1, "priority": 7},
+  {"iface": "vmbr1", "type": "bridge", "method": "manual", "families": ["inet"], "bridge_ports": "bond0", "bridge_vlan_aware": 1, "bridge_vids": "2-4094", "active": 1, "autostart": 1, "priority": 8},
+  {"iface": "vmbr1.30", "type": "vlan", "method": "static", "families": ["inet"], "address": "10.0.30.10", "netmask": "24", "cidr": "10.0.30.10/24", "active": 1, "priority": 9}
+]}

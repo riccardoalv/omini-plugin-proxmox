@@ -1,0 +1,4 @@
+{"data": [
+  {"vmid": "200", "name": "jellyfin", "type": "lxc", "status": "running", "cpu": 0.105, "cpus": 2, "mem": 536870912, "maxmem": 2147483648, "disk": 4294967296, "maxdisk": 17179869184, "swap": 0, "maxswap": 536870912, "uptime": 3600, "netin": 5555, "netout": 4444},
+  {"vmid": "201", "name": "old-pihole", "type": "lxc", "status": "stopped", "cpu": 0, "cpus": 1, "mem": 0, "maxmem": 536870912, "disk": 0, "maxdisk": 8589934592, "uptime": 0}
+]}

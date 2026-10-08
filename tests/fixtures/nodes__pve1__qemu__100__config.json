@@ -1,0 +1,12 @@
+{"data": {
+  "name": "homeassistant",
+  "ostype": "l26",
+  "agent": "1",
+  "cores": 2,
+  "memory": "4096",
+  "boot": "order=scsi0",
+  "scsi0": "local-lvm:vm-100-disk-0,size=32G",
+  "net0": "virtio=BC:24:11:AA:00:01,bridge=vmbr0,firewall=1",
+  "net1": "virtio=BC:24:11:AA:00:02,bridge=vmbr1,tag=20,link_down=1",
+  "digest": "0123456789abcdef"
+}}

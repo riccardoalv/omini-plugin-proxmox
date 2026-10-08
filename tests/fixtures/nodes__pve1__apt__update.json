@@ -1,0 +1,4 @@
+{"data": [
+  {"Package": "pve-manager", "Title": "Proxmox Virtual Environment Management Tools", "Description": "...", "OldVersion": "8.2.4", "Version": "8.2.7", "Origin": "Proxmox", "Priority": "optional", "Section": "admin", "Arch": "amd64"},
+  {"Package": "proxmox-kernel-6.8", "Title": "Proxmox Kernel", "Description": "...", "OldVersion": "6.8.8-2", "Version": "6.8.12-2", "Origin": "Proxmox", "Priority": "optional", "Section": "admin", "Arch": "all"}
+]}
