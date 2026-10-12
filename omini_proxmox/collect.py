@@ -4,6 +4,7 @@ running guest (VM or container), hung under the node that runs it."""
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -247,7 +248,23 @@ def node_interfaces(rows: list[dict[str, Any]]) -> list[Interface]:
                 vlan=vlan if vlan and 1 <= vlan <= 4094 else None,
             )
         )
+    mark_lags(out)
     return out
+
+
+def mark_lags(ifaces: list[Interface]) -> None:
+    """Each port of a Linux bond (its `slaves`) is a member of that LAG.
+    An older SDK has no `lag` field: then nothing is marked."""
+    if "lag" not in Interface.model_fields:
+        return
+    by_name = {i.name: i for i in ifaces}
+    for bond in ifaces:
+        if bond.type != "lag":
+            continue
+        for name in bond.members or []:
+            member = by_name.get(name)
+            if member is not None and member.type != "lag":
+                member.lag = bond.name
 
 
 def management(
@@ -751,6 +768,102 @@ def test(cfg: Config) -> str:
         if missing:
             msg += ". Missing privileges: " + "; ".join(sorted(set(missing)))
         return msg
+    finally:
+        c.close()
+
+
+# --- backup --------------------------------------------------------------------
+
+# Live state in a network row: whether the interface is up / exists now, and
+# its position in the file (shifts when another interface is added).
+NETWORK_STATE = {"active", "exists", "priority"}
+# A guest config's checksum, a lock held by a running task (backup, migrate)
+# and secrets (the cloud-init password, even hashed, and the SSH keys).
+GUEST_LEAVE_OUT = {"digest", "lock", "cipassword", "sshkeys"}
+
+
+def as_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
+
+
+def network_backup(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A node's /etc/network/interfaces as the API gives it, without live state."""
+    return [
+        {k: v for k, v in row.items() if k not in NETWORK_STATE}
+        for row in sorted(rows, key=lambda r: str(r.get("iface")))
+        if isinstance(row, dict)
+    ]
+
+
+def guest_backup(kind: str, vmid: Any, config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": kind,
+        "vmid": counter(vmid),
+        "config": {k: v for k, v in config.items() if k not in GUEST_LEAVE_OUT},
+    }
+
+
+def node_backups(c: Client, node: str, ip_hint: str | None) -> list[dict[str, Any]]:
+    """The node's network configuration, then each running guest's
+    configuration, keyed as collect reports them."""
+    path = f"/nodes/{segment(node)}"
+    missing: list[str] = []
+    out = []
+    rows = optional("node", missing, lambda: c.get(path + "/network"), None)
+    if isinstance(rows, list):
+        ifaces = node_interfaces(rows)
+        node_mac = physical_mac(management(ifaces, rows, ip_hint), {i.name: i for i in ifaces})
+        out.append(
+            {
+                "device": node_mac or f"proxmox:{node}",
+                "format": "json",
+                "content": as_json({"node": node, "network": network_backup(rows)}),
+            }
+        )
+    for kind, row in running_guests(c, node, missing):
+        vmid = row.get("vmid")
+        config = optional(
+            "guests", missing, lambda k=kind, v=vmid: c.get(f"{path}/{k}/{segment(v)}/config"), None
+        )
+        if not isinstance(config, dict):
+            continue
+        nics = guest_nics(config)
+        if not nics:  # collect does not report it either
+            continue
+        out.append(
+            {
+                "device": nics[0].mac,
+                "format": "json",
+                "content": as_json(guest_backup(kind, vmid, config)),
+            }
+        )
+    if missing:
+        log.warning("backup of %s: missing privileges: %s", node, ", ".join(sorted(set(missing))))
+    return out
+
+
+def backup(cfg: Config) -> list[dict[str, Any]]:
+    """Each node's network configuration and each running guest's
+    configuration (what collect reports), as sorted JSON. Only configuration:
+    no status, counters or uptimes, so that two backups differ only when the
+    configuration changed."""
+    c = client_from(cfg)
+    try:
+        read_version(c)
+        nodes, ips = cluster_nodes(c, [])
+        out: list[dict[str, Any]] = []
+        for n in nodes:
+            name = n.get("node")
+            if not name or n.get("status") == "offline":
+                continue
+            hint = ips.get(name) or (connected_ip(c) if len(nodes) == 1 else None)
+            try:
+                out += node_backups(c, name, hint)
+            except PluginError:
+                raise
+            except Exception:  # one node failing never breaks the others
+                log.exception("could not back up node %s", name)
+        return out
     finally:
         c.close()
 

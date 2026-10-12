@@ -271,3 +271,12 @@ def test_waits_as_long_as_asked(cfg):
     assert wait_s(Config({"timeout_s": 90}, None)) == 90
     assert wait_s(Config({"timeout_s": 1}, None)) == 5
     assert wait_s(Config({"timeout_s": 999}, None)) == 120
+
+
+def test_bond_members_report_their_lag(pve, cfg):
+    node = by_name(collect(cfg))["pve1"]
+    ports = {i.name: i for i in node.interfaces}
+    assert ports["enp2s0"].lag == "bond0" and ports["enp3s0"].lag == "bond0"
+    assert ports["bond0"].type == "lag" and ports["bond0"].lag is None
+    assert ports["enp1s0"].lag is None  # a bridge port, not a bond member
+    assert all(i.stp is None for i in node.interfaces)  # the API has no port STP state

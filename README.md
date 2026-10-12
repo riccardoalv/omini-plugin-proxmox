@@ -12,7 +12,7 @@ It reads with `GET` requests only, and never starts, stops or refreshes anything
 |---|---|
 | Nodes of the cluster (or the single host) and their addresses | One device per node |
 | Per node: CPU (% and number of CPUs), memory (% and used of installed), swap, load, uptime, Proxmox VE version, CPU model | Node health |
-| Per node: network interfaces — NICs, bridges, bonds, VLANs, with status, members, IPs, comments, default gateway | Ports of the node |
+| Per node: network interfaces — NICs, bridges, bonds, VLANs, with status, members, IPs, comments, default gateway | Ports of the node (bonds as LAGs, their ports as members) |
 | Per node: storage usage (root filesystem + each active storage) | Node health (disks) |
 | Per node: pending updates — only if the token may read them (see below) | Node health |
 | Running VMs (QEMU) and containers (LXC): name, CPU (% and vCPUs), memory (assigned; % and used for containers only — a VM's memory as the host sees it includes the guest's caches, so it is not reported as use), uptime, OS type, root disk (containers) | One device per guest, with its own health in the device panel |
@@ -65,6 +65,19 @@ PVEAuditor on `/` gives what the plugin needs: `Sys.Audit` (node status, network
 
 - **Guest IPs of VMs** come from the QEMU guest agent (installed and enabled in the VM). The API asks for `VM.GuestAgent.Audit` (Proxmox VE 9; check that your PVEAuditor role has it, else add a role with it on `/vms`). Without it — or without the agent — VMs are still placed under their node, only without IPs; Omini's network scan usually finds them by MAC.
 - **Pending updates**: the update list (`GET /nodes/{node}/apt/update`, only read, never refreshed) requires `Sys.Modify`, which also allows changing a node's network and services. It is **not** recommended for Omini, and PVEAuditor does not have it: the node then shows its version only.
+
+### LAGs
+
+A Linux bond (`type: bond` in the node's network, its ports in `slaves`) is reported as a port of type `lag`, and each of its ports names it (`lag: bond0`), so Omini draws the cables of a bond as one link. Open vSwitch bonds (`OVSBond`) are reported as LAGs too. **Spanning tree** is not reported: the API only says whether a bridge has STP on (`bridge_stp`, off by default on Proxmox VE), never a port's state or role.
+
+### Configuration backups
+
+Omini keeps a history of each device's configuration (once a day and after each change it makes). The plugin gives, as sorted JSON:
+
+- **each node**: its network configuration (`GET /nodes/{node}/network`, sorted by interface), without live state (`active`, `exists`, `priority`);
+- **each running VM and container** that Omini shows: its configuration (`GET /nodes/{node}/{qemu|lxc}/{vmid}/config`) and its type and ID, without `digest` (a checksum), `lock` (a running task) and the secrets `cipassword` (cloud-init password, even hashed) and `sshkeys`.
+
+Only configuration goes in, so two backups differ only when the configuration changed. Omini never restores them. They need no extra privilege: PVEAuditor's `Sys.Audit` and `VM.Audit` already read both.
 
 ### To put VMs in VLANs (optional)
 
@@ -119,6 +132,13 @@ CPU of nodes and guests is reported by the API as a fraction (0–1) and turned 
 - **Default gateway** is reported as a gateway with status `unknown` (Proxmox VE does not monitor it); the node is a server, so its uplink is not drawn as a WAN.
 - **Guests without a network device** are not reported (nothing to place them by). Guest VLAN tags are not reported yet.
 - A guest that moves to another node (migration) moves with the next collection.
+- **Backups of stopped guests** are not made: like collect, the plugin reports running guests only.
+
+### Not verified on hardware
+
+- That `/nodes/{node}/network` returns `slaves` for bonds as a space-separated string (as in `/etc/network/interfaces`), and `ovs_bonds` / `ovs_ports` for Open vSwitch.
+- That `cipassword` comes back from `GET …/qemu/{vmid}/config` (hashed) and `sshkeys` URL-encoded: both are left out of backups either way.
+- That `lock` appears in a guest's config only while a task (backup, migration, snapshot) holds it.
 
 ## Development
 

@@ -1,6 +1,6 @@
 id: proxmox
 name: Proxmox VE
-version: 0.3.0
+version: 0.4.0
 protocol: 1
 entrypoint: main.py
 timeout_s: 240
@@ -10,9 +10,11 @@ description: >-
   version and network interfaces of each node, and every running VM and
   container placed under the node that runs it, with its MACs, IPs, CPU,
   memory and traffic counters; puts a VM's or container's network device in
-  VLANs (its tag and trunks, on a VLAN-aware bridge).
+  VLANs (its tag and trunks, on a VLAN-aware bridge); bonds as LAGs; backs up
+  the network configuration of each node and the configuration of each guest.
 author: Omini
 homepage: https://github.com/riccardoalv/omini-plugin-proxmox
+backup: true
 changes:
   - port.vlans
 fields:
