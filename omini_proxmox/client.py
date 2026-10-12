@@ -79,8 +79,26 @@ class Client:
     def close(self) -> None:
         self.http.close()
 
+    def put(self, path: str, data: dict[str, Any]) -> Any:
+        """PUTs a change (only apply calls it: a VM's network device). Whether
+        it took effect is checked by reading again, never assumed."""
+        try:
+            r = self.http.put(path, data=data)
+        except httpx.HTTPError as e:
+            raise PluginError(f"request to {self.base} failed ({type(e).__name__})") from e
+        if r.status_code == 403:
+            raise Forbidden(path)
+        if r.status_code >= 400:
+            try:
+                errors = r.json().get("errors") or {}
+            except (json.JSONDecodeError, AttributeError):
+                errors = {}
+            detail = "; ".join(f"{k}: {v}" for k, v in errors.items()) or r.reason_phrase
+            raise PluginError(f"Proxmox VE refused the change: {detail}")
+        return r.json().get("data") if r.content else None
+
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        """GETs an API path and returns its `data`. Only GETs are ever sent."""
+        """GETs an API path and returns its `data`."""
         # A node busy for a moment: a read is tried once more, after a pause.
         for attempt in range(2):
             try:

@@ -1,0 +1,76 @@
+from urllib.parse import parse_qs
+
+import httpx
+import pytest
+from omini_sdk import Change, PluginError
+
+import omini_proxmox.collect as collect_module
+
+CONFIG = "/nodes/pve1/qemu/100/config"
+
+
+@pytest.fixture
+def writable(pve):
+    """The node takes PUTs on VM 100's config, and keeps them."""
+    pve.puts = []
+    inner = pve.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/api2/json")
+        if request.method == "PUT" and path == CONFIG:
+            body = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+            pve.puts.append(body)
+            pve.routes[CONFIG]["data"].update(body)
+            return httpx.Response(200, json={"data": None})
+        return inner(request)
+
+    pve.handler = handler
+    collect_module.Client.keywords["transport"] = httpx.MockTransport(handler)
+    return pve
+
+
+def vm(devices):
+    return next(d for d in devices if d.name == "homeassistant")
+
+
+def test_a_vms_nics_report_their_vlans(pve, cfg):
+    nics = {i.name: i for i in vm(collect_module.collect(cfg)).interfaces}
+    assert (nics["net0"].vlans.untagged, nics["net0"].vlans.tagged) == (1, None)
+    assert nics["net1"].vlans.untagged == 20
+
+
+def test_puts_a_nic_in_vlans(writable, cfg):
+    change = Change(
+        device="bc:24:11:aa:00:01",
+        kind="port.vlans",
+        port="net1",
+        value={"untagged": 30, "tagged": [40, 50]},
+    )
+    devices = collect_module.apply(cfg, change)
+    assert writable.puts == [
+        {"net1": "virtio=BC:24:11:AA:00:02,bridge=vmbr1,link_down=1,tag=30,trunks=40;50"}
+    ]
+    net1 = next(i for i in vm(devices).interfaces if i.name == "net1")
+    assert (net1.vlans.untagged, [t.root for t in net1.vlans.tagged]) == (30, [40, 50])
+    # Back to the LAN: no tag, no trunks.
+    collect_module.apply(
+        cfg,
+        Change(device="bc:24:11:aa:00:01", kind="port.vlans", port="net1", value={"untagged": 1}),
+    )
+    assert writable.puts[-1] == {"net1": "virtio=BC:24:11:AA:00:02,bridge=vmbr1,link_down=1"}
+
+
+def test_a_bridge_must_be_vlan_aware(writable, cfg):
+    change = Change(
+        device="bc:24:11:aa:00:01", kind="port.vlans", port="net0", value={"untagged": 30}
+    )
+    with pytest.raises(PluginError, match="vmbr0 on pve1 is not VLAN aware"):
+        collect_module.apply(cfg, change)
+    assert not writable.puts
+
+
+def test_with_vlans_keeps_the_rest():
+    v = "virtio=BC:24:11:AA:00:02,bridge=vmbr1,firewall=1,tag=20,trunks=1;5"
+    assert collect_module.with_vlans(v, {"untagged": 20, "tagged": [7]}) == (
+        "virtio=BC:24:11:AA:00:02,bridge=vmbr1,firewall=1,tag=20,trunks=7"
+    )

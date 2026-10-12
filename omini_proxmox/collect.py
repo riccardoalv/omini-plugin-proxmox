@@ -19,6 +19,7 @@ from omini_sdk import (
     Interface,
     Neighbor,
     PluginError,
+    PortVlans,
     Storage,
     log,
 )
@@ -376,6 +377,8 @@ class Nic:
     up: bool | None = None
     name: str | None = None  # inside the guest (containers: eth0)
     ips: list[str] = field(default_factory=list)
+    tag: int | None = None  # the VLAN of its untagged traffic on a VLAN-aware bridge
+    trunks: list[int] = field(default_factory=list)  # VLANs it also gets tagged
 
 
 def guest_nics(config: dict[str, Any]) -> list[Nic]:
@@ -398,6 +401,10 @@ def guest_nics(config: dict[str, Any]) -> list[Nic]:
             bridge=opts.get("bridge") or None,
             up=opts.get("link_down") != "1",
             name=opts.get("name") or None,
+            tag=counter(opts.get("tag")) or None,
+            trunks=sorted(
+                {int(t) for t in re.split(r"[;,]", opts.get("trunks", "")) if t.strip().isdigit()}
+            ),
         )
         for ip_key in ("ip", "ip6"):
             ip = opts.get(ip_key, "")
@@ -515,6 +522,10 @@ def guest_device(
                 up=nic.up,
                 rx_bytes=rx,
                 tx_bytes=tx,
+                # Its VLANs (the tag, the trunks): what Omini can change.
+                vlans=PortVlans(untagged=nic.tag or 1, tagged=nic.trunks or None)
+                if nic.bridge
+                else None,
             )
         )
     ips = plain_ips([ip for nic in nics for ip in nic.ips])
@@ -742,3 +753,83 @@ def test(cfg: Config) -> str:
         return msg
     finally:
         c.close()
+
+
+# --- changes -------------------------------------------------------------------
+
+CHANGE_ROLE = (
+    "the API token may not change the VMs' network devices: give its user a role with "
+    "VM.Config.Network on the VMs (see the plugin's README)"
+)
+
+
+def with_vlans(value: str, vlans: dict[str, Any]) -> str:
+    """A NIC's property string with its tag and trunks replaced (the rest as it is)."""
+    parts = [p for p in value.split(",") if p and not p.startswith(("tag=", "trunks="))]
+    untagged = vlans.get("untagged")
+    tagged = [int(t) for t in vlans.get("tagged") or [] if int(t) != (untagged or 1)]
+    if untagged and int(untagged) != 1:
+        parts.append(f"tag={int(untagged)}")
+    if tagged:
+        parts.append("trunks=" + ";".join(str(t) for t in sorted(tagged)))
+    return ",".join(parts)
+
+
+def find_guest(c: Client, key: str) -> tuple[str, str, str, dict[str, Any]]:
+    """(node, kind, vmid, config) of the guest whose first MAC is key."""
+    missing: list[str] = []
+    nodes, _ = cluster_nodes(c, missing)
+    for n in nodes:
+        node = str(n.get("node") or "")
+        for kind, row in running_guests(c, node, missing):
+            vmid = str(row.get("vmid"))
+            config = c.get(f"/nodes/{segment(node)}/{kind}/{segment(vmid)}/config")
+            nics = guest_nics(config) if isinstance(config, dict) else []
+            if nics and nics[0].mac == key:
+                return node, kind, vmid, config
+    raise PluginError(f"no running VM or container has the MAC {key}")
+
+
+def apply(cfg: Config, change: Any) -> list[Device]:
+    """A VM's (or container's) VLANs (port.vlans): the tag and trunks of one of
+    its network devices, on a VLAN-aware bridge. Proxmox applies a network
+    device to a running guest at once (hotplug); the config is read again to
+    check it, and a change that waits for a restart is reported as such."""
+    if change.kind != "port.vlans" or not isinstance(change.value, dict):
+        raise PluginError(f"this plugin cannot apply {change.kind}")
+    port = str(change.port or "")
+    c = client_from(cfg)
+    try:
+        node, kind, vmid, config = find_guest(c, change.device)
+        current = config.get(port)
+        if not isinstance(current, str):
+            raise PluginError(f"the guest has no network device {port}")
+        bridge = options(current).get("bridge", "")
+        wants_vlans = (change.value.get("untagged") or 1) != 1 or bool(change.value.get("tagged"))
+        if wants_vlans:
+            rows = c.get(f"/nodes/{segment(node)}/network") or []
+            row = next((r for r in rows if r.get("iface") == bridge), {})
+            if not flag(row.get("bridge_vlan_aware")):
+                raise PluginError(
+                    f"{bridge} on {node} is not VLAN aware: turn it on in Proxmox "
+                    f"(the node → System → Network → {bridge} → VLAN aware), then try again"
+                )
+        wanted = with_vlans(current, change.value)
+        base = f"/nodes/{segment(node)}/{kind}/{segment(vmid)}"
+        if wanted != current:
+            try:
+                c.put(base + "/config", {port: wanted})
+            except Forbidden as e:
+                raise PluginError(CHANGE_ROLE) from e
+            after = c.get(base + "/config") or {}
+            if after.get(port) != wanted:
+                pending = optional("guests", [], lambda: c.get(base + "/pending"), []) or []
+                if any(p.get("key") == port and p.get("pending") == wanted for p in pending):
+                    raise PluginError(
+                        f"saved, but {port} changes only when the guest restarts "
+                        "(network hotplug is off for it)"
+                    )
+                raise PluginError(f"Proxmox VE did not apply the change to {port}")
+    finally:
+        c.close()
+    return collect(cfg)

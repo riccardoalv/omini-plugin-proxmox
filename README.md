@@ -1,8 +1,8 @@
 # omini-plugin-proxmox
 
-[Omini](https://github.com/riccardoalv/omini) plugin for **Proxmox VE**, through its official REST API with a read-only API token. It reads a single host or a whole cluster, and reports every running VM and container as its own device, **placed under the node that runs it**.
+[Omini](https://github.com/riccardoalv/omini) plugin for **Proxmox VE**, through its official REST API with an API token. It reads a single host or a whole cluster, and reports every running VM and container as its own device, **placed under the node that runs it**.
 
-Read-only: it only sends `GET` requests, and never starts, stops, changes or refreshes anything (not even the package list).
+It reads with `GET` requests only, and never starts, stops or refreshes anything (not even the package list). The one change it makes, when asked from Omini, is a VM's or container's VLANs (below), with a token that has the role for it.
 
 > **Experimental.** This plugin was built from the official API documentation and tested against recorded answers shaped like the documented ones, not on a real Proxmox VE host yet. Reports from real hosts are welcome.
 
@@ -37,7 +37,7 @@ so Omini draws it under the node that runs it, on the bridge it is attached to, 
 
 **Integrations → Add → Proxmox VE** (when it is in Omini's plugin catalog), or install it from its address, `https://github.com/riccardoalv/omini-plugin-proxmox`.
 
-## Create a read-only API token
+## Create the API token
 
 Use a dedicated user and an API token with the built-in **PVEAuditor** role (read-only) on `/`, with **privilege separation** on — the token then has only the permissions given to it, never more than its user. See [User Management → API tokens](https://pve.proxmox.com/pve-docs/chapter-pveum.html#pveum_tokens) in the Proxmox VE docs.
 
@@ -65,6 +65,21 @@ PVEAuditor on `/` gives what the plugin needs: `Sys.Audit` (node status, network
 
 - **Guest IPs of VMs** come from the QEMU guest agent (installed and enabled in the VM). The API asks for `VM.GuestAgent.Audit` (Proxmox VE 9; check that your PVEAuditor role has it, else add a role with it on `/vms`). Without it — or without the agent — VMs are still placed under their node, only without IPs; Omini's network scan usually finds them by MAC.
 - **Pending updates**: the update list (`GET /nodes/{node}/apt/update`, only read, never refreshed) requires `Sys.Modify`, which also allows changing a node's network and services. It is **not** recommended for Omini, and PVEAuditor does not have it: the node then shows its version only.
+
+### To put VMs in VLANs (optional)
+
+From a VM's or container's panel in Omini (**Network → Move to another VLAN**, or the VLANs tab's ports) the plugin changes the **tag** and **trunks** of its network device (`port.vlans`): `PUT /nodes/{node}/{qemu|lxc}/{vmid}/config` with `netN`. Nothing else of the guest changes. A running guest takes it at once (network hotplug); one with hotplug off gets it at its next restart, and Omini says so.
+
+- The bridge must be **VLAN aware** (the node → System → Network → `vmbr1` → *VLAN aware*); the plugin never changes the host's network, and asks for it when it is off.
+- The token needs, besides PVEAuditor, a role with **VM.Config.Network** on `/vms` and **SDN.Use** on the bridge (Proxmox VE 8+):
+
+```sh
+pveum role add OminiNetwork --privs "VM.Config.Network SDN.Use"
+pveum acl modify /vms --tokens 'omini@pve!omini' --roles OminiNetwork
+pveum acl modify /sdn/zones/localnetwork --tokens 'omini@pve!omini' --roles OminiNetwork
+```
+
+(Grant the same to the user `omini@pve`: with privilege separation, a token never has more than its user.) Without them the plugin keeps reading, and a VLAN change says which role it needs.
 
 ## Form fields
 
