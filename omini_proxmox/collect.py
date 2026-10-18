@@ -874,6 +874,7 @@ CHANGE_ROLE = (
     "the API token may not change the VMs' network devices: give its user a role with "
     "VM.Config.Network on the VMs (see the plugin's README)"
 )
+NIC_KEY = re.compile(r"^net\d+$")
 
 
 def with_vlans(value: str, vlans: dict[str, Any]) -> str:
@@ -916,6 +917,8 @@ def apply(cfg: Config, change: Any) -> list[Device]:
     if change.kind != "port.vlans" or not isinstance(change.value, dict):
         raise PluginError(f"this plugin cannot apply {change.kind}")
     port = str(change.port or "")
+    if not NIC_KEY.match(port):  # any other key of the config is not a NIC
+        raise PluginError(f"{port or 'the port'} is not a network device (net0, net1…)")
     c = client_from(cfg)
     try:
         node, kind, vmid, config = find_guest(c, change.device)

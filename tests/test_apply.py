@@ -120,3 +120,11 @@ def test_a_change_waiting_for_a_restart_is_recognized_in_any_order(writable, cfg
     )
     with pytest.raises(PluginError, match="changes only when the guest restarts"):
         collect_module.apply(cfg, change)
+
+
+@pytest.mark.parametrize("port", ["name", "ostype", "scsi0", "net", "net0x", ""])
+def test_only_a_network_device_can_be_changed(writable, cfg, port):
+    change = Change(device="bc:24:11:aa:00:01", kind="port.vlans", port=port, value={"untagged": 1})
+    with pytest.raises(PluginError, match="not a network device"):
+        collect_module.apply(cfg, change)
+    assert not writable.puts
