@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from omini_sdk import (
     Config,
+    ConfigBackup,
     Device,
     Firmware,
     Gateway,
@@ -834,22 +835,22 @@ def guest_backup(kind: str, vmid: Any, config: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def node_backups(c: Client, node: str, ip_hint: str | None) -> list[dict[str, Any]]:
+def node_backups(c: Client, node: str, ip_hint: str | None) -> list[ConfigBackup]:
     """The node's network configuration, then each running guest's
     configuration, keyed as collect reports them."""
     path = f"/nodes/{segment(node)}"
     missing: list[str] = []
-    out = []
+    out: list[ConfigBackup] = []
     rows = optional("node", missing, lambda: c.get(path + "/network"), None)
     if isinstance(rows, list):
         ifaces = node_interfaces(rows)
         node_mac = physical_mac(management(ifaces, rows, ip_hint), {i.name: i for i in ifaces})
         out.append(
-            {
-                "device": node_mac or f"proxmox:{node}",
-                "format": "json",
-                "content": as_json({"node": node, "network": network_backup(rows)}),
-            }
+            ConfigBackup(
+                device=node_mac or f"proxmox:{node}",
+                format="json",
+                content=as_json({"node": node, "network": network_backup(rows)}),
+            )
         )
     for kind, row in running_guests(c, node, missing):
         vmid = row.get("vmid")
@@ -862,18 +863,18 @@ def node_backups(c: Client, node: str, ip_hint: str | None) -> list[dict[str, An
         if not nics:  # collect does not report it either
             continue
         out.append(
-            {
-                "device": nics[0].mac,
-                "format": "json",
-                "content": as_json(guest_backup(kind, vmid, config)),
-            }
+            ConfigBackup(
+                device=nics[0].mac,
+                format="json",
+                content=as_json(guest_backup(kind, vmid, config)),
+            )
         )
     if missing:
         log.warning("backup of %s: missing privileges: %s", node, ", ".join(sorted(set(missing))))
     return out
 
 
-def backup(cfg: Config) -> list[dict[str, Any]]:
+def backup(cfg: Config) -> list[ConfigBackup]:
     """Each node's network configuration and each running guest's
     configuration (what collect reports), as sorted JSON. Only configuration:
     no status, counters or uptimes, so that two backups differ only when the
@@ -882,7 +883,7 @@ def backup(cfg: Config) -> list[dict[str, Any]]:
     try:
         read_version(c)
         nodes, ips = cluster_nodes(c, [])
-        out: list[dict[str, Any]] = []
+        out: list[ConfigBackup] = []
         for n in nodes:
             name = n.get("node")
             if not name or n.get("status") == "offline":
