@@ -16,7 +16,7 @@ It reads with `GET` requests only, and never starts, stops or refreshes anything
 | Per node: storage usage (root filesystem + each active storage) | Node health (disks) |
 | Per node: pending updates — only if the token may read them (see below) | Node health |
 | Running VMs (QEMU) and containers (LXC): name, CPU (% and vCPUs), memory (assigned; % and used for containers only — a VM's memory as the host sees it includes the guest's caches, so it is not reported as use), uptime, OS type, root disk (containers) | One device per guest, with its own health in the device panel |
-| Each guest's network devices (`net0`…`netN`): MAC, bridge, link up/down | Guest MACs, and which node it hangs under |
+| Each guest's network devices (`net0`…`netN`): MAC, bridge, whether it is switched on (`link_down`, a setting: the link state itself is not known) | Guest MACs, and which node it hangs under |
 | Guest IPs: QEMU guest agent (VMs), container interfaces (LXC), static IPs in the config | Guest addresses |
 | Byte counters of each guest NIC (the host's `tap`/`veth` devices) | Guest traffic |
 

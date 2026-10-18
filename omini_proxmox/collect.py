@@ -397,7 +397,7 @@ class Nic:
     index: int
     mac: str
     bridge: str | None = None
-    up: bool | None = None
+    enabled: bool | None = None  # link_down: an administrative setting, not the carrier
     name: str | None = None  # inside the guest (containers: eth0)
     ips: list[str] = field(default_factory=list)
     tag: int | None = None  # the VLAN of its untagged traffic on a VLAN-aware bridge
@@ -422,7 +422,7 @@ def guest_nics(config: dict[str, Any]) -> list[Nic]:
             index=int(m.group(1)),
             mac=found,
             bridge=opts.get("bridge") or None,
-            up=opts.get("link_down") != "1",
+            enabled=opts.get("link_down") != "1",
             name=opts.get("name") or None,
             tag=counter(opts.get("tag")) or None,
             trunks=sorted(
@@ -544,7 +544,9 @@ def guest_device(
                 type="other",  # a virtual NIC: no physical jack
                 mac=nic.mac,
                 ips=nic.ips or None,
-                up=nic.up,
+                # link_down only says whether it is switched on: the carrier
+                # is not known, so up is left empty.
+                **newer_fields(Interface, enabled=nic.enabled),
                 rx_bytes=rx,
                 tx_bytes=tx,
                 # Its VLANs (the tag, the trunks): what Omini can change, so

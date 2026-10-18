@@ -79,9 +79,10 @@ def test_vm_hangs_under_its_node(pve, cfg):
         "192.168.1.10",
     )
     net0, net1 = vm.interfaces
-    assert (net0.name, net0.type, net0.up) == ("net0", "other", True)
+    # link_down is an administrative setting, not the carrier: up stays unknown.
+    assert (net0.name, net0.type, net0.enabled, net0.up) == ("net0", "other", True, None)
     assert (net0.rx_bytes, net0.tx_bytes) == (987654321, 123456789)  # counters, from netstat
-    assert net1.up is False and net1.ips is None  # link_down=1
+    assert (net1.enabled, net1.up, net1.ips) == (False, None, None)  # link_down=1
 
 
 def test_container_hangs_under_its_node(pve, cfg):
