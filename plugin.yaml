@@ -40,6 +40,7 @@ fields:
     type: bool
     label: Verify the TLS certificate
     default: false
+    group: Advanced
     help: Proxmox VE uses a self-signed certificate by default; turn this on if yours is trusted.
   - key: timeout_s
     type: int

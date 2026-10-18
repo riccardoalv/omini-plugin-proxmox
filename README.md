@@ -101,11 +101,12 @@ pveum acl modify /sdn/zones/localnetwork --tokens 'omini@pve!omini' --roles Omin
 | Address | `https://192.168.1.10:8006` | Any node of a cluster: the others are read through it. Port 8006 is used when none is given (write `:443` explicitly behind a reverse proxy). |
 | API token ID | `omini@pve!omini` | `user@realm!token` |
 | API token secret | `6f6a4f3c-…` | Stored encrypted by Omini, never logged |
-| Verify the TLS certificate | off | Proxmox VE uses a self-signed certificate by default |
+| Verify the TLS certificate (Advanced) | off | Proxmox VE uses a self-signed certificate by default |
+| Wait for an answer, seconds (Advanced) | `30` | How long to wait for each answer of the API (5 to 120); raise it if Proxmox VE does not answer in time |
 
 ## How it works
 
-Every request is a `GET` to `https://<host>:8006/api2/json/…` with the header `Authorization: PVEAPIToken=<user>@<realm>!<tokenid>=<secret>` ([Proxmox VE API](https://pve.proxmox.com/wiki/Proxmox_VE_API), [API viewer](https://pve.proxmox.com/pve-docs/api-viewer/)). Guests are read a few at a time; each request times out after 10 s; one node or guest failing never fails the others.
+Every request is a `GET` to `https://<host>:8006/api2/json/…` with the header `Authorization: PVEAPIToken=<user>@<realm>!<tokenid>=<secret>` ([Proxmox VE API](https://pve.proxmox.com/wiki/Proxmox_VE_API), [API viewer](https://pve.proxmox.com/pve-docs/api-viewer/)). Guests are read a few at a time; each request waits up to 30 s by default (the *Wait for an answer* field), and a read that times out is asked once more; one node or guest failing never fails the others.
 
 | Endpoint | Privilege | Read for |
 |---|---|---|
@@ -130,7 +131,7 @@ CPU of nodes and guests is reported by the API as a fraction (0–1) and turned 
 - **No node traffic counters, link speeds or temperatures**: the API only offers averaged rates (RRD), which are not counters, and no sensors. They are left empty, never estimated.
 - **Physical disks** (`/nodes/{node}/disks/list`) are not read: their SMART health and wear have no place in Omini's data model yet; storage usage is reported instead.
 - **Default gateway** is reported as a gateway with status `unknown` (Proxmox VE does not monitor it); the node is a server, so its uplink is not drawn as a WAN.
-- **Guests without a network device** are not reported (nothing to place them by). Guest VLAN tags are not reported yet.
+- **Guests without a network device** are not reported (nothing to place them by). Guest VLANs (tag and trunks) are reported only for NICs on a VLAN-aware or Open vSwitch bridge, the ones Omini can change.
 - A guest that moves to another node (migration) moves with the next collection.
 - **Backups of stopped guests** are not made: like collect, the plugin reports running guests only.
 

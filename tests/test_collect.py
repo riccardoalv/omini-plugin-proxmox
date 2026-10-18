@@ -305,3 +305,18 @@ def test_a_shared_storage_is_reported_once(pve, cfg):
         "pve1": ["/", "local", "local-lvm", "nas-backup"],
         "pve2": ["local", "local-lvm"],  # its own storages stay
     }
+
+
+def test_manifest_groups_the_advanced_fields():
+    from pathlib import Path
+
+    manifest = (Path(__file__).parent.parent / "plugin.yaml").read_text()
+    fields = manifest.split("\nfields:", 1)[1].split("\n  - key: ")[1:]
+    groups = {f.split("\n", 1)[0]: "group: Advanced" in f for f in fields}
+    assert groups == {
+        "url": False,
+        "token_id": False,
+        "token_secret": False,
+        "verify_tls": True,
+        "timeout_s": True,
+    }
