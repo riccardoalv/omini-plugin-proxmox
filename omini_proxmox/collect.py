@@ -889,6 +889,16 @@ def with_vlans(value: str, vlans: dict[str, Any]) -> str:
     return ",".join(parts)
 
 
+def change_read(c: Client, path: str) -> Any:
+    """A read a change needs: a refusal is said, never an unexpected error."""
+    try:
+        return c.get(path)
+    except Forbidden as e:
+        raise PluginError(CHANGE_ROLE) from e
+    except (NotFound, Unavailable) as e:
+        raise PluginError(f"could not read {e} from Proxmox VE") from e
+
+
 def same_nic(value: Any, wanted: str) -> bool:
     """Whether a NIC's property string has the options wanted, in any order."""
     return isinstance(value, str) and options(value) == options(wanted)
@@ -902,7 +912,7 @@ def find_guest(c: Client, key: str) -> tuple[str, str, str, dict[str, Any]]:
         node = str(n.get("node") or "")
         for kind, row in running_guests(c, node, missing):
             vmid = str(row.get("vmid"))
-            config = c.get(f"/nodes/{segment(node)}/{kind}/{segment(vmid)}/config")
+            config = change_read(c, f"/nodes/{segment(node)}/{kind}/{segment(vmid)}/config")
             nics = guest_nics(config) if isinstance(config, dict) else []
             if nics and nics[0].mac == key:
                 return node, kind, vmid, config
@@ -928,7 +938,7 @@ def apply(cfg: Config, change: Any) -> list[Device]:
         bridge = options(current).get("bridge", "")
         wants_vlans = (change.value.get("untagged") or 1) != 1 or bool(change.value.get("tagged"))
         if wants_vlans:
-            rows = c.get(f"/nodes/{segment(node)}/network") or []
+            rows = change_read(c, f"/nodes/{segment(node)}/network") or []
             row = next((r for r in rows if r.get("iface") == bridge), {})
             if not flag(row.get("bridge_vlan_aware")):
                 raise PluginError(
@@ -944,7 +954,7 @@ def apply(cfg: Config, change: Any) -> list[Device]:
                 raise PluginError(CHANGE_ROLE) from e
             # Proxmox VE prints a NIC back in its own key order (a container's
             # type=veth last): the options are compared, not the text.
-            after = c.get(base + "/config") or {}
+            after = change_read(c, base + "/config") or {}
             if not same_nic(after.get(port), wanted):
                 pending = optional("guests", [], lambda: c.get(base + "/pending"), []) or []
                 if any(

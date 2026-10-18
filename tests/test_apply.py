@@ -128,3 +128,22 @@ def test_only_a_network_device_can_be_changed(writable, cfg, port):
     with pytest.raises(PluginError, match="not a network device"):
         collect_module.apply(cfg, change)
     assert not writable.puts
+
+
+@pytest.mark.parametrize(
+    ("path", "status", "message"),
+    [
+        ("/nodes/pve1/qemu/100/config", 403, "VM.Config.Network"),
+        ("/nodes/pve1/network", 403, "VM.Config.Network"),
+        ("/nodes/pve1/network", 595, "could not read"),
+        ("/nodes/pve1/qemu/100/config", 500, "could not read"),
+    ],
+)
+def test_a_read_refused_during_a_change_says_why(writable, cfg, path, status, message):
+    writable.errors[path] = status
+    change = Change(
+        device="bc:24:11:aa:00:01", kind="port.vlans", port="net1", value={"untagged": 30}
+    )
+    with pytest.raises(PluginError, match=message):
+        collect_module.apply(cfg, change)
+    assert not writable.puts
