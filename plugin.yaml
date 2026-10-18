@@ -10,13 +10,15 @@ description: >-
   version and network interfaces of each node, and every running VM and
   container placed under the node that runs it, with its MACs, IPs, CPU,
   memory and traffic counters; puts a VM's or container's network device in
-  VLANs (its tag and trunks, on a VLAN-aware bridge); bonds as LAGs; backs up
+  VLANs (its tag and trunks, on a VLAN-aware bridge) and switches its link on or
+  off; bonds as LAGs; backs up
   the network configuration of each node and the configuration of each guest.
 author: Omini
 homepage: https://github.com/riccardoalv/omini-plugin-proxmox
 backup: true
 changes:
   - port.vlans
+  - port.enabled
 fields:
   - key: url
     type: url

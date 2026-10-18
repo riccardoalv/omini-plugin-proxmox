@@ -2,7 +2,7 @@
 
 [Omini](https://github.com/riccardoalv/omini) plugin for **Proxmox VE**, through its official REST API with an API token. It reads a single host or a whole cluster, and reports every running VM and container as its own device, **placed under the node that runs it**.
 
-It reads with `GET` requests only, and never starts, stops or refreshes anything (not even the package list). The one change it makes, when asked from Omini, is a VM's or container's VLANs (below), with a token that has the role for it.
+It reads with `GET` requests only, and never starts, stops or refreshes anything (not even the package list). The only changes it makes, when asked from Omini, are to a VM's or container's network device: its VLANs, or switching its link on or off (below), with a token that has the role for it.
 
 > **Experimental.** This plugin was built from the official API documentation and tested against recorded answers shaped like the documented ones, not on a real Proxmox VE host yet. Reports from real hosts are welcome.
 
@@ -93,6 +93,10 @@ pveum acl modify /sdn/zones/localnetwork --tokens 'omini@pve!omini' --roles Omin
 ```
 
 (Grant the same to the user `omini@pve`: with privilege separation, a token never has more than its user.) Without them the plugin keeps reading, and a VLAN change says which role it needs.
+
+### To switch a guest's network device on or off (optional)
+
+From a port of a VM or container in Omini (**Disable** / **Enable**) the plugin sets or clears `link_down=1` on that network device (`port.enabled`), with the same `PUT /nodes/{node}/{qemu|lxc}/{vmid}/config` and `netN`, and the same role (**VM.Config.Network**, above). The rest of the device (bridge, tag, trunks, firewall) is kept. Like the cable being pulled: the guest keeps its configuration and sees no link. The config is read again to check it; a guest with network hotplug off gets it at its next restart, and Omini says so.
 
 ## Form fields
 

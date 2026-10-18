@@ -951,12 +951,48 @@ def find_guest(c: Client, key: str) -> tuple[str, str, str, dict[str, Any]]:
     raise PluginError(f"no running VM or container has the MAC {key}")
 
 
+def with_link(value: str, enabled: bool) -> str:
+    """A NIC's property string switched on (no link_down) or off (link_down=1)."""
+    parts = [p for p in value.split(",") if p and not p.startswith("link_down=")]
+    if not enabled:
+        parts.append("link_down=1")
+    return ",".join(parts)
+
+
+def put_nic(c: Client, base: str, port: str, current: str, wanted: str) -> None:
+    """PUT a NIC's new property string, then read the config again to check it."""
+    if wanted == current:
+        return
+    try:
+        c.put(base + "/config", {port: wanted})
+    except Forbidden as e:
+        raise PluginError(CHANGE_ROLE) from e
+    # Proxmox VE prints a NIC back in its own key order (a container's
+    # type=veth last): the options are compared, not the text.
+    after = change_read(c, base + "/config") or {}
+    if not same_nic(after.get(port), wanted):
+        pending = optional("guests", [], lambda: c.get(base + "/pending"), []) or []
+        if any(p.get("key") == port and same_nic(p.get("pending"), wanted) for p in pending):
+            raise PluginError(
+                f"saved, but {port} changes only when the guest restarts "
+                "(network hotplug is off for it)"
+            )
+        raise PluginError(f"Proxmox VE did not apply the change to {port}")
+
+
 def apply(cfg: Config, change: Any) -> list[Device]:
-    """A VM's (or container's) VLANs (port.vlans): the tag and trunks of one of
-    its network devices, on a VLAN-aware bridge. Proxmox applies a network
-    device to a running guest at once (hotplug); the config is read again to
-    check it, and a change that waits for a restart is reported as such."""
-    if change.kind != "port.vlans" or not isinstance(change.value, dict):
+    """A VM's (or container's) network device: its VLANs (port.vlans), the tag
+    and trunks on a VLAN-aware bridge, or its link (port.enabled), switched
+    on or off with link_down. Proxmox applies a network device to a running
+    guest at once (hotplug); the config is read again to check it, and a
+    change that waits for a restart is reported as such."""
+    if change.kind == "port.vlans":
+        if not isinstance(change.value, dict):
+            raise PluginError("port.vlans needs the port's VLANs")
+    elif change.kind == "port.enabled":
+        if not isinstance(change.value, bool):
+            raise PluginError("port.enabled needs true or false")
+    else:
         raise PluginError(f"this plugin cannot apply {change.kind}")
     port = str(change.port or "")
     if not NIC_KEY.match(port):  # any other key of the config is not a NIC
@@ -967,36 +1003,21 @@ def apply(cfg: Config, change: Any) -> list[Device]:
         current = config.get(port)
         if not isinstance(current, str):
             raise PluginError(f"the guest has no network device {port}")
-        bridge = options(current).get("bridge", "")
-        wants_vlans = (change.value.get("untagged") or 1) != 1 or bool(change.value.get("tagged"))
-        if wants_vlans:
-            rows = change_read(c, f"/nodes/{segment(node)}/network") or []
-            row = next((r for r in rows if r.get("iface") == bridge), {})
-            if not vlan_capable(row):
-                raise PluginError(
-                    f"{bridge} on {node} is not VLAN aware: turn it on in Proxmox "
-                    f"(the node → System → Network → {bridge} → VLAN aware), then try again"
-                )
-        wanted = with_vlans(current, change.value)
         base = f"/nodes/{segment(node)}/{kind}/{segment(vmid)}"
-        if wanted != current:
-            try:
-                c.put(base + "/config", {port: wanted})
-            except Forbidden as e:
-                raise PluginError(CHANGE_ROLE) from e
-            # Proxmox VE prints a NIC back in its own key order (a container's
-            # type=veth last): the options are compared, not the text.
-            after = change_read(c, base + "/config") or {}
-            if not same_nic(after.get(port), wanted):
-                pending = optional("guests", [], lambda: c.get(base + "/pending"), []) or []
-                if any(
-                    p.get("key") == port and same_nic(p.get("pending"), wanted) for p in pending
-                ):
+        if change.kind == "port.enabled":
+            put_nic(c, base, port, current, with_link(current, change.value))
+        else:
+            bridge = options(current).get("bridge", "")
+            untagged = change.value.get("untagged") or 1
+            if untagged != 1 or change.value.get("tagged"):
+                rows = change_read(c, f"/nodes/{segment(node)}/network") or []
+                row = next((r for r in rows if r.get("iface") == bridge), {})
+                if not vlan_capable(row):
                     raise PluginError(
-                        f"saved, but {port} changes only when the guest restarts "
-                        "(network hotplug is off for it)"
+                        f"{bridge} on {node} is not VLAN aware: turn it on in Proxmox "
+                        f"(the node → System → Network → {bridge} → VLAN aware), then try again"
                     )
-                raise PluginError(f"Proxmox VE did not apply the change to {port}")
+            put_nic(c, base, port, current, with_vlans(current, change.value))
     finally:
         c.close()
     return collect(cfg)

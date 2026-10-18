@@ -171,3 +171,80 @@ def test_an_open_vswitch_bridge_takes_vlans(writable, cfg):
     )
     collect_module.apply(cfg, change)
     assert writable.puts == [{"net0": "virtio=BC:24:11:AA:00:01,bridge=vmbr0,firewall=1,tag=30"}]
+
+
+def test_switches_a_nics_link_off_and_on(writable, cfg):
+    off = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net0", value=False)
+    devices = collect_module.apply(cfg, off)
+    assert writable.puts == [
+        {"net0": "virtio=BC:24:11:AA:00:01,bridge=vmbr0,firewall=1,link_down=1"}
+    ]
+    assert next(i for i in vm(devices).interfaces if i.name == "net0").enabled is False
+    on = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net0", value=True)
+    devices = collect_module.apply(cfg, on)
+    assert writable.puts[-1] == {"net0": "virtio=BC:24:11:AA:00:01,bridge=vmbr0,firewall=1"}
+    assert next(i for i in vm(devices).interfaces if i.name == "net0").enabled is True
+
+
+def test_switching_on_a_nic_that_is_off_keeps_its_vlan(writable, cfg):
+    on = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net1", value=True)
+    collect_module.apply(cfg, on)
+    assert writable.puts == [{"net1": "virtio=BC:24:11:AA:00:02,bridge=vmbr1,tag=20"}]
+
+
+def test_a_link_already_as_wanted_is_not_written(writable, cfg):
+    off = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net1", value=False)
+    collect_module.apply(cfg, off)
+    assert not writable.puts
+
+
+def test_switches_a_containers_link_off(writable, cfg):
+    off = Change(device="bc:24:11:bb:00:01", kind="port.enabled", port="net0", value=False)
+    devices = collect_module.apply(cfg, off)
+    assert collect_module.options(writable.puts[0]["net0"])["link_down"] == "1"
+    ct = next(d for d in devices if d.name == "jellyfin")
+    assert next(i for i in ct.interfaces if i.name == "net0").enabled is False
+
+
+def test_a_link_change_needs_the_network_role(writable, cfg):
+    inner = writable.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PUT":
+            return httpx.Response(403, json={"data": None})
+        return inner(request)
+
+    collect_module.Client.keywords["transport"] = httpx.MockTransport(handler)
+    off = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net0", value=False)
+    with pytest.raises(PluginError, match=r"VM\.Config\.Network"):
+        collect_module.apply(cfg, off)
+
+
+def test_a_link_change_not_applied_is_said(writable, cfg):
+    inner = writable.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PUT":
+            return httpx.Response(200, json={"data": None})  # accepted, not kept
+        return inner(request)
+
+    collect_module.Client.keywords["transport"] = httpx.MockTransport(handler)
+    off = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net0", value=False)
+    with pytest.raises(PluginError, match="did not apply the change to net0"):
+        collect_module.apply(cfg, off)
+
+
+@pytest.mark.parametrize("value", [None, "off", 0, {"enabled": False}])
+def test_port_enabled_needs_a_boolean(writable, cfg, value):
+    change = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net0", value=value)
+    with pytest.raises(PluginError, match="true or false"):
+        collect_module.apply(cfg, change)
+    assert not writable.puts
+
+
+def test_with_link_keeps_the_rest():
+    v = "virtio=BC:24:11:AA:00:02,bridge=vmbr1,link_down=1,tag=20"
+    assert collect_module.with_link(v, True) == "virtio=BC:24:11:AA:00:02,bridge=vmbr1,tag=20"
+    assert collect_module.with_link(v, False) == (
+        "virtio=BC:24:11:AA:00:02,bridge=vmbr1,tag=20,link_down=1"
+    )
