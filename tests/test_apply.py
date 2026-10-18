@@ -7,20 +7,32 @@ from omini_sdk import Change, PluginError
 import omini_proxmox.collect as collect_module
 
 CONFIG = "/nodes/pve1/qemu/100/config"
+CT_CONFIG = "/nodes/pve1/lxc/200/config"
+
+
+def reprinted(value: str) -> str:
+    """A NIC as Proxmox VE prints it back: its keys in its own order (a
+    container's `type=veth` always last), not in the order they were sent."""
+    return ",".join(sorted(value.split(","), key=lambda p: p.startswith("type=")))
+
+
+def body_of(request: httpx.Request) -> dict[str, str]:
+    return {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
 
 
 @pytest.fixture
 def writable(pve):
-    """The node takes PUTs on VM 100's config, and keeps them."""
+    """The node takes PUTs on VM 100's and container 200's config, and keeps
+    them as it prints them."""
     pve.puts = []
     inner = pve.handler
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path.removeprefix("/api2/json")
-        if request.method == "PUT" and path == CONFIG:
-            body = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+        if request.method == "PUT" and path in (CONFIG, CT_CONFIG):
+            body = body_of(request)
             pve.puts.append(body)
-            pve.routes[CONFIG]["data"].update(body)
+            pve.routes[path]["data"].update({k: reprinted(v) for k, v in body.items()})
             return httpx.Response(200, json={"data": None})
         return inner(request)
 
@@ -74,3 +86,37 @@ def test_with_vlans_keeps_the_rest():
     assert collect_module.with_vlans(v, {"untagged": 20, "tagged": [7]}) == (
         "virtio=BC:24:11:AA:00:02,bridge=vmbr1,firewall=1,tag=20,trunks=7"
     )
+
+
+def test_a_change_printed_back_in_another_order_is_applied(writable, cfg):
+    change = Change(
+        device="bc:24:11:bb:00:01", kind="port.vlans", port="net1", value={"untagged": 40}
+    )
+    devices = collect_module.apply(cfg, change)
+    sent = "name=eth1,bridge=vmbr1,hwaddr=BC:24:11:BB:00:02,ip=10.0.30.31/24,type=veth,tag=40"
+    assert writable.puts == [{"net1": sent}]
+    ct = next(d for d in devices if d.name == "jellyfin")
+    assert next(i for i in ct.interfaces if i.name == "net1").vlans.untagged == 40
+
+
+def test_a_change_waiting_for_a_restart_is_recognized_in_any_order(writable, cfg):
+    """With hotplug off the config keeps the old value and the new one is
+    pending, printed in Proxmox VE's own order."""
+    inner = writable.handler
+    pending = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path.removeprefix("/api2/json")
+        if request.method == "PUT" and path == CT_CONFIG:
+            pending.extend({"key": k, "pending": reprinted(v)} for k, v in body_of(request).items())
+            return httpx.Response(200, json={"data": None})
+        if path == "/nodes/pve1/lxc/200/pending":
+            return httpx.Response(200, json={"data": pending})
+        return inner(request)
+
+    collect_module.Client.keywords["transport"] = httpx.MockTransport(handler)
+    change = Change(
+        device="bc:24:11:bb:00:01", kind="port.vlans", port="net1", value={"untagged": 40}
+    )
+    with pytest.raises(PluginError, match="changes only when the guest restarts"):
+        collect_module.apply(cfg, change)

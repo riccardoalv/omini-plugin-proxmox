@@ -888,6 +888,11 @@ def with_vlans(value: str, vlans: dict[str, Any]) -> str:
     return ",".join(parts)
 
 
+def same_nic(value: Any, wanted: str) -> bool:
+    """Whether a NIC's property string has the options wanted, in any order."""
+    return isinstance(value, str) and options(value) == options(wanted)
+
+
 def find_guest(c: Client, key: str) -> tuple[str, str, str, dict[str, Any]]:
     """(node, kind, vmid, config) of the guest whose first MAC is key."""
     missing: list[str] = []
@@ -934,10 +939,14 @@ def apply(cfg: Config, change: Any) -> list[Device]:
                 c.put(base + "/config", {port: wanted})
             except Forbidden as e:
                 raise PluginError(CHANGE_ROLE) from e
+            # Proxmox VE prints a NIC back in its own key order (a container's
+            # type=veth last): the options are compared, not the text.
             after = c.get(base + "/config") or {}
-            if after.get(port) != wanted:
+            if not same_nic(after.get(port), wanted):
                 pending = optional("guests", [], lambda: c.get(base + "/pending"), []) or []
-                if any(p.get("key") == port and p.get("pending") == wanted for p in pending):
+                if any(
+                    p.get("key") == port and same_nic(p.get("pending"), wanted) for p in pending
+                ):
                     raise PluginError(
                         f"saved, but {port} changes only when the guest restarts "
                         "(network hotplug is off for it)"
