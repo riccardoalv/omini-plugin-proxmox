@@ -147,3 +147,14 @@ def test_a_read_refused_during_a_change_says_why(writable, cfg, path, status, me
     with pytest.raises(PluginError, match=message):
         collect_module.apply(cfg, change)
     assert not writable.puts
+
+
+def test_an_open_vswitch_bridge_takes_vlans(writable, cfg):
+    """An OVS bridge tags its ports without `bridge_vlan_aware`."""
+    vmbr0 = next(r for r in writable.routes["/nodes/pve1/network"]["data"] if r["iface"] == "vmbr0")
+    vmbr0["type"] = "OVSBridge"
+    change = Change(
+        device="bc:24:11:aa:00:01", kind="port.vlans", port="net0", value={"untagged": 30}
+    )
+    collect_module.apply(cfg, change)
+    assert writable.puts == [{"net0": "virtio=BC:24:11:AA:00:01,bridge=vmbr0,firewall=1,tag=30"}]

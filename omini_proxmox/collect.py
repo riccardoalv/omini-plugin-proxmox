@@ -252,6 +252,12 @@ def node_interfaces(rows: list[dict[str, Any]]) -> list[Interface]:
     return out
 
 
+def vlan_capable(row: dict[str, Any]) -> bool:
+    """Whether a bridge carries a guest NIC's tag and trunks: a Linux bridge
+    with VLAN aware on, or an Open vSwitch bridge (which always tags)."""
+    return row.get("type") == "OVSBridge" or bool(flag(row.get("bridge_vlan_aware")))
+
+
 def mark_lags(ifaces: list[Interface]) -> None:
     """Each port of a Linux bond (its `slaves`) is a member of that LAG.
     An older SDK has no `lag` field: then nothing is marked."""
@@ -940,7 +946,7 @@ def apply(cfg: Config, change: Any) -> list[Device]:
         if wants_vlans:
             rows = change_read(c, f"/nodes/{segment(node)}/network") or []
             row = next((r for r in rows if r.get("iface") == bridge), {})
-            if not flag(row.get("bridge_vlan_aware")):
+            if not vlan_capable(row):
                 raise PluginError(
                     f"{bridge} on {node} is not VLAN aware: turn it on in Proxmox "
                     f"(the node → System → Network → {bridge} → VLAN aware), then try again"

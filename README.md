@@ -83,7 +83,7 @@ Only configuration goes in, so two backups differ only when the configuration ch
 
 From a VM's or container's panel in Omini (**Network → Move to another VLAN**, or the VLANs tab's ports) the plugin changes the **tag** and **trunks** of its network device (`port.vlans`): `PUT /nodes/{node}/{qemu|lxc}/{vmid}/config` with `netN`. Nothing else of the guest changes. A running guest takes it at once (network hotplug); one with hotplug off gets it at its next restart, and Omini says so.
 
-- The bridge must be **VLAN aware** (the node → System → Network → `vmbr1` → *VLAN aware*); the plugin never changes the host's network, and asks for it when it is off.
+- The bridge must be **VLAN aware** (the node → System → Network → `vmbr1` → *VLAN aware*), or an Open vSwitch bridge (which always tags); the plugin never changes the host's network, and asks for it when it is off.
 - The token needs, besides PVEAuditor, a role with **VM.Config.Network** on `/vms` and **SDN.Use** on the bridge (Proxmox VE 8+):
 
 ```sh
