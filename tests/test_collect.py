@@ -69,7 +69,10 @@ def test_vm_hangs_under_its_node(pve, cfg):
     assert vm.role == "server" and vm.model == "QEMU/KVM virtual machine"
     assert vm.os_version == "Linux"
     assert [m.root for m in vm.macs] == ["bc:24:11:aa:00:01", "bc:24:11:aa:00:02"]
-    assert vm.ips == ["192.168.1.20"] and vm.host == "192.168.1.20"  # from the guest agent
+    # From the guest agent: IPv4 first, then global and ULA IPv6 (in their
+    # short form), never the link-local fe80::.
+    assert vm.ips == ["192.168.1.20", "2001:db8:1::20", "fd00::20"]
+    assert vm.host == "192.168.1.20"
     assert vm.cpu_pct == 4.2 and vm.mem_pct is None and vm.uptime_s == 86400
     [nb] = vm.neighbors
     assert (nb.protocol, nb.local_port, nb.remote_port) == ("other", "net0", "vmbr0")
@@ -82,6 +85,7 @@ def test_vm_hangs_under_its_node(pve, cfg):
     # link_down is an administrative setting, not the carrier: up stays unknown.
     assert (net0.name, net0.type, net0.enabled, net0.up) == ("net0", "other", True, None)
     assert (net0.rx_bytes, net0.tx_bytes) == (987654321, 123456789)  # counters, from netstat
+    assert net0.ips == ["192.168.1.20/24", "2001:db8:1::20/64", "fd00::20/64"]
     assert (net1.enabled, net1.up, net1.ips) == (False, None, None)  # link_down=1
 
 
@@ -89,10 +93,12 @@ def test_container_hangs_under_its_node(pve, cfg):
     ct = by_name(collect(cfg))["jellyfin"]
     assert ct.key == "bc:24:11:bb:00:01"
     assert ct.model == "LXC container" and ct.os_version == "Debian"
-    assert ct.ips == ["192.168.1.30", "10.0.30.31"]
+    assert ct.ips == ["192.168.1.30", "10.0.30.31", "2001:db8:1::30", "fd00::30"]
     assert ct.cpu_pct == 10.5 and ct.mem_pct == 25.0
     eth0, eth1 = ct.interfaces
     assert (eth0.description, eth0.rx_bytes, eth0.tx_bytes) == ("eth0", 5555, 4444)
+    # fd00::30 comes both in ip-addresses and as inet6: once.
+    assert eth0.ips == ["192.168.1.30/24", "2001:db8:1::30/64", "fd00::30/64"]
     assert eth1.ips == ["10.0.30.31/24"]  # static in the config, also seen live: once
     assert ct.storage[0].mount == "/" and ct.storage[0].used_bytes == 4294967296
     [nb] = ct.neighbors
@@ -320,3 +326,23 @@ def test_manifest_groups_the_advanced_fields():
         "verify_tls": True,
         "timeout_s": True,
     }
+
+
+def test_an_ipv6_only_node_is_reached_on_its_ipv6(pve):
+    from omini_sdk import Config
+
+    pve.routes["/cluster/status"]["data"] = []  # no cluster address, a name in the URL
+    vmbr0 = next(r for r in pve.routes["/nodes/pve1/network"]["data"] if r["iface"] == "vmbr0")
+    for key in ("address", "netmask", "cidr", "gateway"):
+        vmbr0.pop(key)
+    vmbr0["gateway6"] = "fd00::1"
+    cfg = Config(
+        {
+            "url": "https://pve1.lan:8006",
+            "token_id": "omini@pve!omini",
+            "token_secret": "6f6a4f3c-1b2d-4e5f-8a9b-0c1d2e3f4a5b",
+        }
+    )
+    devices = by_name(collect(cfg))
+    assert devices["pve1"].host == "fd00::10"
+    assert devices["homeassistant"].neighbors[0].remote_ip == "fd00::10"

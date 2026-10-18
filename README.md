@@ -12,12 +12,12 @@ It reads with `GET` requests only, and never starts, stops or refreshes anything
 |---|---|
 | Nodes of the cluster (or the single host) and their addresses | One device per node |
 | Per node: CPU (% and number of CPUs), memory (% and used of installed), swap, load, uptime, Proxmox VE version, CPU model | Node health |
-| Per node: network interfaces — NICs, bridges, bonds, VLANs, with status, members, IPs, comments, default gateway | Ports of the node (bonds as LAGs, their ports as members) |
+| Per node: network interfaces — NICs, bridges, bonds, VLANs, with status, members, IPs (IPv4 and IPv6), comments, default gateways (IPv4 and IPv6) | Ports of the node (bonds as LAGs, their ports as members) |
 | Per node: storage usage (root filesystem + each active storage; a shared one, such as NFS or Ceph, only on the first node by name that has it active, so it is not counted once per node) | Node health (disks) |
 | Per node: pending updates — only if the token may read them (see below) | Node health |
 | Running VMs (QEMU) and containers (LXC): name, CPU (% and vCPUs), memory (assigned; % and used for containers only — a VM's memory as the host sees it includes the guest's caches, so it is not reported as use), uptime, OS type, root disk (containers) | One device per guest, with its own health in the device panel |
 | Each guest's network devices (`net0`…`netN`): MAC, bridge, whether it is switched on (`link_down`, a setting: the link state itself is not known) | Guest MACs, and which node it hangs under |
-| Guest IPs: QEMU guest agent (VMs), container interfaces (LXC), static IPs in the config | Guest addresses |
+| Guest IPs, IPv4 and IPv6 (global and ULA; link-local `fe80::` left out): QEMU guest agent (VMs), container interfaces (LXC), static IPs in the config (`ip`, `ip6`) | Guest addresses |
 | Byte counters of each guest NIC (the host's `tap`/`veth` devices) | Guest traffic |
 
 Stopped guests and templates are not reported. Works with Proxmox VE 7 and later (8.x and 9.x documented).

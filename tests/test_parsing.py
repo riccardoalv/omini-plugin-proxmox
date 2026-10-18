@@ -3,6 +3,7 @@ import pytest
 from omini_proxmox.client import base_url
 from omini_proxmox.collect import (
     agent_enabled,
+    guest_addresses,
     guest_nics,
     mac,
     netstat_counters,
@@ -91,3 +92,18 @@ def test_netstat_device_names():
 def test_pve_version():
     assert pve_version("pve-manager/9.0.3/025864202ebb6109") == "9.0.3"
     assert pve_version(None) is None
+
+
+def test_ipv6_addresses_are_kept_in_their_short_form_and_once():
+    rows = [
+        {
+            "hardware-address": "BC:24:11:AA:00:01",
+            "ip-addresses": [
+                {"ip-address": "2001:DB8:0:0::1", "prefix": 64},
+                {"ip-address": "2001:db8::1", "prefix": 64},
+                {"ip-address": "fe80::1%eth0", "prefix": 64},
+                {"ip-address": "fd12:3456::7"},
+            ],
+        }
+    ]
+    assert guest_addresses(rows) == {"bc:24:11:aa:00:01": ["2001:db8::1/64", "fd12:3456::7"]}

@@ -140,11 +140,25 @@ def options(text: str) -> dict[str, str]:
 
 
 def usable_ip(ip: str) -> bool:
+    """IPv4 and IPv6 alike (global and ULA); never loopback, link-local
+    (fe80::, 169.254/16), unspecified or multicast."""
     try:
         a = ipaddress.ip_address(ip.split("/")[0])
     except ValueError:
         return False
     return not (a.is_loopback or a.is_link_local or a.is_unspecified or a.is_multicast)
+
+
+def canonical(ip: str) -> str:
+    """An address (with or without its prefix) in its short, lower-case form,
+    so the same IPv6 address read from the config and from the guest agent
+    ('FD00:0:0::5') is kept once."""
+    addr, sep, prefix = ip.partition("/")
+    try:
+        text = str(ipaddress.ip_address(addr.split("%")[0]))
+    except ValueError:
+        return ip
+    return f"{text}/{prefix}" if sep else text
 
 
 def plain_ips(cidrs: list[str]) -> list[str]:
@@ -218,8 +232,8 @@ def iface_ips(row: dict[str, Any]) -> list[str]:
                 )
             except ValueError:
                 cidr = row[addr_key]
-        if cidr and usable_ip(cidr):
-            ips.append(cidr)
+        if cidr and usable_ip(str(cidr)):
+            ips.append(canonical(str(cidr)))
     return ips
 
 
@@ -442,7 +456,7 @@ def guest_nics(config: dict[str, Any]) -> list[Nic]:
         for ip_key in ("ip", "ip6"):
             ip = opts.get(ip_key, "")
             if "/" in ip and usable_ip(ip):  # static addresses (not dhcp / manual / auto)
-                nic.ips.append(ip)
+                nic.ips.append(canonical(ip))
         nics.append(nic)
     return sorted(nics, key=lambda n: n.index)
 
@@ -469,11 +483,14 @@ def guest_addresses(rows: Any) -> dict[str, list[str]]:
         ips = []
         for a in row.get("ip-addresses") or []:
             ip, prefix = a.get("ip-address"), a.get("prefix")
-            if ip and usable_ip(ip):
-                ips.append(f"{ip}/{prefix}" if prefix is not None else ip)
+            if isinstance(ip, str) and usable_ip(ip):
+                ip = canonical(f"{ip}/{prefix}" if prefix is not None else ip)
+                if ip not in ips:
+                    ips.append(ip)
         for key in ("inet", "inet6"):  # containers also give them as plain fields
-            if row.get(key) and usable_ip(row[key]) and row[key] not in ips:
-                ips.append(row[key])
+            v = row.get(key)
+            if isinstance(v, str) and usable_ip(v) and canonical(v) not in ips:
+                ips.append(canonical(v))
         if ips:
             out.setdefault(m, []).extend(ip for ip in ips if ip not in out.get(m, []))
     return out
@@ -655,8 +672,8 @@ def node_devices(
     if not node_mac:
         log.info("node %s exposes no MAC address (no hwaddress in its network config)", node)
     mgmt_ip = ip_hint
-    if not mgmt_ip and mgmt:
-        mgmt_ip = next((ip.split("/")[0] for ip in mgmt.ips or [] if "." in ip), None)
+    if not mgmt_ip and mgmt:  # IPv4 first; an IPv6-only node by its IPv6
+        mgmt_ip = next(iter(plain_ips(mgmt.ips or [])), None)
     all_ips = plain_ips([ip for i in ifaces for ip in i.ips or []])
     memory, swap = status.get("memory") or {}, status.get("swap") or {}
     load = [n for n in (number(v) for v in status.get("loadavg") or []) if n is not None][:3]
