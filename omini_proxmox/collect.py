@@ -319,7 +319,12 @@ def gateways(rows: list[dict[str, Any]]) -> list[Gateway]:
     return out
 
 
-def storage(status: dict[str, Any], stores: list[dict[str, Any]]) -> list[Storage]:
+def storage(
+    status: dict[str, Any], stores: list[dict[str, Any]], shared: set[str] | None = None
+) -> list[Storage]:
+    """The root filesystem and each active storage. A shared one (NFS, Ceph…:
+    the same storage on every node) is reported once, by the first node that
+    has it: `shared` holds the names already reported."""
     out = []
     root = status.get("rootfs") or {}
     if counter(root.get("total")):
@@ -335,6 +340,10 @@ def storage(status: dict[str, Any], stores: list[dict[str, Any]]) -> list[Storag
             continue
         if not s.get("storage") or not counter(s.get("total")):
             continue
+        if flag(s.get("shared")) and shared is not None:
+            if s["storage"] in shared:
+                continue
+            shared.add(str(s["storage"]))
         out.append(
             Storage(
                 mount=str(s["storage"]),
@@ -621,7 +630,12 @@ def running_guests(c: Client, node: str, missing: list[str]) -> list[tuple[str, 
 
 
 def node_devices(
-    c: Client, node: str, ip_hint: str | None, missing: list[str], pool: ThreadPoolExecutor
+    c: Client,
+    node: str,
+    ip_hint: str | None,
+    missing: list[str],
+    pool: ThreadPoolExecutor,
+    shared: set[str] | None = None,
 ) -> list[Device]:
     path = f"/nodes/{segment(node)}"
     status = optional("node", missing, lambda: c.get(path + "/status"), {}) or {}
@@ -661,7 +675,7 @@ def node_devices(
         mem_pct=pct(memory.get("used"), memory.get("total")),
         swap_pct=pct(swap.get("used"), swap.get("total")),
         load_avg=load or None,
-        storage=storage(status, stores) or None,
+        storage=storage(status, stores, shared) or None,
         firmware=firmware(version, updates),
         macs=sorted({i.mac for i in ifaces if i.mac}) or None,
         ips=all_ips or None,
@@ -738,6 +752,7 @@ def collect(cfg: Config) -> list[Device]:
         missing: list[str] = []
         nodes, ips = cluster_nodes(c, missing)
         devices: list[Device] = []
+        shared: set[str] = set()  # shared storages already reported, by name
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:
             for n in nodes:
                 name = n.get("node")
@@ -749,7 +764,7 @@ def collect(cfg: Config) -> list[Device]:
                 # A single host is reached at the address Omini connects to.
                 hint = ips.get(name) or (connected_ip(c) if len(nodes) == 1 else None)
                 try:
-                    devices += node_devices(c, name, hint, missing, pool)
+                    devices += node_devices(c, name, hint, missing, pool, shared)
                 except PluginError:
                     raise
                 except Exception:  # one node failing never breaks the others

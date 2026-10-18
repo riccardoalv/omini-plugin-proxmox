@@ -281,3 +281,27 @@ def test_bond_members_report_their_lag(pve, cfg):
     assert ports["bond0"].type == "lag" and ports["bond0"].lag is None
     assert ports["enp1s0"].lag is None  # a bridge port, not a bond member
     assert all(i.stp is None for i in node.interfaces)  # the API has no port STP state
+
+
+def test_a_shared_storage_is_reported_once(pve, cfg):
+    """An NFS or Ceph storage every node mounts is the same storage: reported
+    on the first node (by name) that has it active, not once per node."""
+    nfs = pve.routes["/nodes/pve1/storage"]["data"][2]
+    nfs.update(active=1, total=4000000000000, used=3900000000000)
+    pve.routes["/nodes"]["data"] += [
+        {"node": "pve0", "status": "online"},
+        {"node": "pve2", "status": "online"},
+    ]
+    for name in ("pve0", "pve2"):
+        stores = copy.deepcopy(pve.routes["/nodes/pve1/storage"])
+        pve.routes[f"/nodes/{name}/storage"] = stores
+    # pve0 comes first by name, but has not mounted it.
+    pve.routes["/nodes/pve0/storage"]["data"][2]["active"] = 0
+
+    devices = by_name(collect(cfg))
+    mounts = {n: [s.mount for s in devices[n].storage] for n in ("pve0", "pve1", "pve2")}
+    assert mounts == {
+        "pve0": ["local", "local-lvm"],
+        "pve1": ["/", "local", "local-lvm", "nas-backup"],
+        "pve2": ["local", "local-lvm"],  # its own storages stay
+    }
