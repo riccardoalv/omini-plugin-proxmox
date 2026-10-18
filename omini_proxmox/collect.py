@@ -495,6 +495,8 @@ class Host:
     node: str
     mac: str | None
     ip: str | None
+    # Its bridges that carry a NIC's tag and trunks: only there Omini can change them.
+    vlan_bridges: set[str] = field(default_factory=set)
 
 
 def guest_device(
@@ -545,9 +547,10 @@ def guest_device(
                 up=nic.up,
                 rx_bytes=rx,
                 tx_bytes=tx,
-                # Its VLANs (the tag, the trunks): what Omini can change.
+                # Its VLANs (the tag, the trunks): what Omini can change, so
+                # only on a bridge that carries them.
                 vlans=PortVlans(untagged=nic.tag or 1, tagged=nic.trunks or None)
-                if nic.bridge
+                if nic.bridge in host.vlan_bridges
                 else None,
             )
         )
@@ -669,7 +672,12 @@ def node_devices(
             mem_used_bytes=counter(memory.get("used")),
         ),
     )
-    host = Host(node=node, mac=node_mac, ip=mgmt_ip)
+    host = Host(
+        node=node,
+        mac=node_mac,
+        ip=mgmt_ip,
+        vlan_bridges={str(r["iface"]) for r in rows if r.get("iface") and vlan_capable(r)},
+    )
     guests = running_guests(c, node, missing)
     found = pool.map(lambda g: guest_device(c, g[0], g[1], host, counters, missing), guests)
     return [host_device, *(g for g in found if g is not None)]

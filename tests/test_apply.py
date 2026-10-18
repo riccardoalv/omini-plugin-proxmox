@@ -47,8 +47,21 @@ def vm(devices):
 
 def test_a_vms_nics_report_their_vlans(pve, cfg):
     nics = {i.name: i for i in vm(collect_module.collect(cfg)).interfaces}
-    assert (nics["net0"].vlans.untagged, nics["net0"].vlans.tagged) == (1, None)
-    assert nics["net1"].vlans.untagged == 20
+    assert (nics["net1"].vlans.untagged, nics["net1"].vlans.tagged) == (20, None)
+    # vmbr0 is not VLAN aware: its tag cannot be changed, so none is reported.
+    assert nics["net0"].vlans is None
+
+
+def test_nics_on_an_open_vswitch_bridge_report_their_vlans(pve, cfg):
+    vmbr0 = next(r for r in pve.routes["/nodes/pve1/network"]["data"] if r["iface"] == "vmbr0")
+    vmbr0["type"] = "OVSBridge"
+    nics = {i.name: i for i in vm(collect_module.collect(cfg)).interfaces}
+    assert nics["net0"].vlans.untagged == 1
+
+
+def test_without_the_nodes_network_no_vlans_are_reported(pve, cfg):
+    pve.errors["/nodes/pve1/network"] = 403
+    assert all(i.vlans is None for i in vm(collect_module.collect(cfg)).interfaces)
 
 
 def test_puts_a_nic_in_vlans(writable, cfg):
