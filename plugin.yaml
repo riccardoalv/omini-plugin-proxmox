@@ -1,6 +1,6 @@
 id: proxmox
 name: Proxmox VE
-version: 0.4.0
+version: 0.5.0
 protocol: 1
 entrypoint: main.py
 timeout_s: 240
