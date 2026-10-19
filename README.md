@@ -20,7 +20,7 @@ It reads with `GET` requests only, and never starts, stops or refreshes anything
 | Guest IPs, IPv4 and IPv6 (global and ULA; link-local `fe80::` left out): QEMU guest agent (VMs), container interfaces (LXC), static IPs in the config (`ip`, `ip6`) | Guest addresses |
 | Byte counters of each guest NIC (the host's `tap`/`veth` devices) | Guest traffic |
 
-Stopped guests and templates are not reported. Works with Proxmox VE 7 and later (8.x and 9.x documented).
+Stopped guests and templates are not reported. Works with Proxmox VE 7 and later (8.x and 9.x documented), and needs Omini 1.7 or later (the SDK with the plugin toolkit).
 
 ### How guests are placed
 
@@ -81,7 +81,7 @@ Only configuration goes in, so two backups differ only when the configuration ch
 
 ### To put VMs in VLANs (optional)
 
-From a VM's or container's panel in Omini (**Network → Move to another VLAN**, or the VLANs tab's ports) the plugin changes the **tag** and **trunks** of its network device (`port.vlans`): `PUT /nodes/{node}/{qemu|lxc}/{vmid}/config` with `netN`. Nothing else of the guest changes. A running guest takes it at once (network hotplug); one with hotplug off gets it at its next restart, and Omini says so.
+From a VM's or container's panel in Omini (**Network → Move to another VLAN**, or the VLANs tab's ports) the plugin changes the **tag** and **trunks** of its network device (`port.vlans`): `PUT /nodes/{node}/{qemu|lxc}/{vmid}/config` with `netN`. Nothing else of the guest changes. A running guest takes it at once (network hotplug); one with hotplug off gets it at its next restart, and Omini says so. The config is read again (every 2 seconds, up to 30) until it shows the change; one it does not show by then is put back as it was, and the error ends "(undone)" (or "(could not be undone: check it in Proxmox VE)"). A change Proxmox VE refuses is not undone: nothing was changed.
 
 - The bridge must be **VLAN aware** (the node → System → Network → `vmbr1` → *VLAN aware*), or an Open vSwitch bridge (which always tags); the plugin never changes the host's network, and asks for it when it is off.
 - The token needs, besides PVEAuditor, a role with **VM.Config.Network** on `/vms` and **SDN.Use** on the bridge (Proxmox VE 8+):
@@ -96,7 +96,7 @@ pveum acl modify /sdn/zones/localnetwork --tokens 'omini@pve!omini' --roles Omin
 
 ### To switch a guest's network device on or off (optional)
 
-From a port of a VM or container in Omini (**Disable** / **Enable**) the plugin sets or clears `link_down=1` on that network device (`port.enabled`), with the same `PUT /nodes/{node}/{qemu|lxc}/{vmid}/config` and `netN`, and the same role (**VM.Config.Network**, above). The rest of the device (bridge, tag, trunks, firewall) is kept. Like the cable being pulled: the guest keeps its configuration and sees no link. The config is read again to check it; a guest with network hotplug off gets it at its next restart, and Omini says so.
+From a port of a VM or container in Omini (**Disable** / **Enable**) the plugin sets or clears `link_down=1` on that network device (`port.enabled`), with the same `PUT /nodes/{node}/{qemu|lxc}/{vmid}/config` and `netN`, and the same role (**VM.Config.Network**, above). The rest of the device (bridge, tag, trunks, firewall) is kept. Like the cable being pulled: the guest keeps its configuration and sees no link. The config is read again to check it, and put back as it was when it does not show the change (as above); a guest with network hotplug off gets it at its next restart, and Omini says so.
 
 ## Form fields
 
@@ -106,11 +106,11 @@ From a port of a VM or container in Omini (**Disable** / **Enable**) the plugin 
 | API token ID | `omini@pve!omini` | `user@realm!token` |
 | API token secret | `6f6a4f3c-…` | Stored encrypted by Omini, never logged |
 | Verify the TLS certificate (Advanced) | off | Proxmox VE uses a self-signed certificate by default |
-| Wait for an answer, seconds (Advanced) | `30` | How long to wait for each answer of the API (5 to 120); raise it if Proxmox VE does not answer in time |
+| Timeout, seconds (Advanced) | `30` | How long to wait for each answer of the API (5 to 120); raise it if Proxmox VE does not answer in time |
 
 ## How it works
 
-Every request is a `GET` to `https://<host>:8006/api2/json/…` with the header `Authorization: PVEAPIToken=<user>@<realm>!<tokenid>=<secret>` ([Proxmox VE API](https://pve.proxmox.com/wiki/Proxmox_VE_API), [API viewer](https://pve.proxmox.com/pve-docs/api-viewer/)). Guests are read a few at a time; each request waits up to 30 s by default (the *Wait for an answer* field), and a read that times out is asked once more; one node or guest failing never fails the others.
+Every request is a `GET` to `https://<host>:8006/api2/json/…` with the header `Authorization: PVEAPIToken=<user>@<realm>!<tokenid>=<secret>` ([Proxmox VE API](https://pve.proxmox.com/wiki/Proxmox_VE_API), [API viewer](https://pve.proxmox.com/pve-docs/api-viewer/)). Guests are read a few at a time; each request waits up to 30 s by default (the *Timeout* field); a refused connection or a busy node (429, 503) is asked again twice (after 1 and 2 s), a request that times out once; one node or guest failing never fails the others.
 
 | Endpoint | Privilege | Read for |
 |---|---|---|

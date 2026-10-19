@@ -243,7 +243,7 @@ def test_cpus_and_memory_of_nodes_and_guests(pve, cfg):
     assert ct.mem_pct == 25
 
 
-def test_a_slow_answer_is_asked_again(pve, cfg, monkeypatch):
+def test_a_slow_answer_is_asked_again(pve, cfg, monkeypatch, pauses):
     from functools import partial
 
     import httpx
@@ -251,7 +251,6 @@ def test_a_slow_answer_is_asked_again(pve, cfg, monkeypatch):
     import omini_proxmox.client as client_module
     import omini_proxmox.collect as collect_module
 
-    monkeypatch.setattr(client_module, "RETRY_PAUSE_S", 0)
     slow = {"/nodes"}  # the first read of the node list times out
 
     def handler(request):
@@ -267,6 +266,33 @@ def test_a_slow_answer_is_asked_again(pve, cfg, monkeypatch):
         partial(client_module.Client, transport=httpx.MockTransport(handler)),
     )
     assert collect(cfg)
+    assert pauses == [1.0]
+
+
+def test_a_busy_node_is_asked_again(pve, cfg, pauses):
+    import httpx
+
+    import omini_proxmox.collect as collect_module
+
+    inner = pve.handler
+    busy = {"left": 1}
+
+    def handler(request):
+        if busy["left"] and request.url.path.endswith("/nodes/pve1/status"):
+            busy["left"] -= 1
+            return httpx.Response(503, json={"data": None})
+        return inner(request)
+
+    collect_module.Client.keywords["transport"] = httpx.MockTransport(handler)
+    node = by_name(collect(cfg))["pve1"]
+    assert node.cpu_count == 6 and pauses == [1.0]
+
+
+def test_an_unreachable_host_is_tried_again(cfg, pauses):
+    cfg["url"] = "https://127.0.0.1:9"
+    with pytest.raises(PluginError, match="cannot connect"):
+        collect(cfg)
+    assert pauses == [1.0, 2.0]
 
 
 def test_waits_as_long_as_asked(cfg):

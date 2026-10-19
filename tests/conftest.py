@@ -44,6 +44,14 @@ class FakeProxmox:
         return httpx.Response(200, json=self.routes[path])
 
 
+@pytest.fixture(autouse=True)
+def pauses(monkeypatch):
+    """No real pauses (retries, change checks): the seconds asked are kept."""
+    asked = []
+    monkeypatch.setattr("time.sleep", asked.append)
+    return asked
+
+
 @pytest.fixture
 def pve(monkeypatch):
     fake = FakeProxmox()

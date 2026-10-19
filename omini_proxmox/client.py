@@ -1,4 +1,5 @@
-"""Minimal Proxmox VE REST API client, authenticated with an API token.
+"""Proxmox VE REST API client, authenticated with an API token, on the SDK's
+HTTP client: timeouts, retries, and errors that say what went wrong.
 
 https://pve.proxmox.com/wiki/Proxmox_VE_API
 """
@@ -6,46 +7,24 @@ https://pve.proxmox.com/wiki/Proxmox_VE_API
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote
 
 import httpx
-from omini_sdk import PluginError, log
+from omini_sdk import PluginError
+from omini_sdk.http import Client as HttpClient
+from omini_sdk.http import Forbidden, HttpError, NotFound, Unavailable, normalize_url
+
+__all__ = ["DEFAULT_PORT", "Client", "Forbidden", "NotFound", "Unavailable", "base_url", "segment"]
 
 DEFAULT_PORT = 8006
-
-# Pause before asking a slow node again.
-RETRY_PAUSE_S = 2.0
-
-
-class Forbidden(Exception):
-    """The token lacks the privilege for a path (HTTP 403)."""
-
-
-class NotFound(Exception):
-    """The path does not exist on this version (HTTP 404 / 501)."""
-
-
-class Unavailable(Exception):
-    """The API answered with an error for this path: a guest agent that is not
-    running, a cluster node that is offline (595)..."""
+API = "/api2/json"
 
 
 def base_url(url: str) -> str:
     """'192.168.1.10' → 'https://192.168.1.10:8006'. An explicit port is kept
     (e.g. :443 behind a reverse proxy)."""
-    url = url.strip().rstrip("/")
-    if not url.startswith(("https://", "http://")):
-        url = "https://" + url
-    parts = urlsplit(url)
-    netloc = parts.netloc
-    if parts.port is None:
-        netloc = f"{netloc}:{DEFAULT_PORT}"
-    path = parts.path
-    if path.endswith("/api2/json"):
-        path = path[: -len("/api2/json")]
-    return urlunsplit((parts.scheme, netloc, path, "", ""))
+    return normalize_url(url, port=DEFAULT_PORT, strip=(API,))
 
 
 def segment(value: Any) -> str:
@@ -53,7 +32,7 @@ def segment(value: Any) -> str:
     return quote(str(value), safe="")
 
 
-class Client:
+class Client(HttpClient):
     def __init__(
         self,
         url: str,
@@ -63,74 +42,59 @@ class Client:
         timeout: float = 30,
         transport: httpx.BaseTransport | None = None,
     ):
-        self.base = base_url(url)
-        self.http = httpx.Client(
-            base_url=self.base + "/api2/json",
-            verify=verify_tls,
+        super().__init__(
+            url,
+            name="Proxmox VE",
+            api=API,
+            port=DEFAULT_PORT,
+            strip=(API,),
+            verify_tls=verify_tls,
             timeout=timeout,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "omini-plugin-proxmox",
-                "Authorization": f"PVEAPIToken={token_id}={token_secret}",
-            },
+            user_agent="omini-plugin-proxmox",
+            headers={"Authorization": f"PVEAPIToken={token_id}={token_secret}"},
+            unauthorized=(
+                "Proxmox VE rejected the API token: check the token ID "
+                "(user@realm!name) and its secret"
+            ),
             transport=transport,
         )
 
-    def close(self) -> None:
-        self.http.close()
+    def check(self, r: httpx.Response, method: str, path: str) -> None:
+        """501 is a path this version lacks; another error on a read means
+        the API cannot answer it now (a guest agent that is not running, an
+        offline cluster node: 595); a refused change gives Proxmox VE's
+        reasons."""
+        status = r.status_code
+        if status < 400 or status in (401, 403, 404, 410):
+            super().check(r, method, path)
+            return
+        where = {"status": status, "method": method, "resource": path}
+        if status == 501:
+            raise NotFound(f"Proxmox VE has no {path}", **where)
+        if method == "GET":
+            raise Unavailable(f"{path}: HTTP {status} {r.reason_phrase}".strip(), **where)
+        raise HttpError(f"Proxmox VE refused the change: {self.detail(r)}", **where)
 
-    def put(self, path: str, data: dict[str, Any]) -> Any:
+    def detail(self, r: httpx.Response) -> str:
+        """Proxmox VE's reasons for a refused change (its `errors` per
+        parameter), else its status."""
+        try:
+            errors = r.json().get("errors") or {}
+        except (json.JSONDecodeError, AttributeError):
+            errors = {}
+        if isinstance(errors, dict) and errors:
+            return "; ".join(f"{k}: {v}" for k, v in errors.items())
+        return r.reason_phrase or f"HTTP {r.status_code}"
+
+    def put(self, path: str, data: dict[str, Any]) -> Any:  # type: ignore[override]
         """PUTs a change (only apply calls it: a VM's network device). Whether
         it took effect is checked by reading again, never assumed."""
-        try:
-            r = self.http.put(path, data=data)
-        except httpx.HTTPError as e:
-            raise PluginError(f"request to {self.base} failed ({type(e).__name__})") from e
-        if r.status_code == 403:
-            raise Forbidden(path)
-        if r.status_code >= 400:
-            try:
-                errors = r.json().get("errors") or {}
-            except (json.JSONDecodeError, AttributeError):
-                errors = {}
-            detail = "; ".join(f"{k}: {v}" for k, v in errors.items()) or r.reason_phrase
-            raise PluginError(f"Proxmox VE refused the change: {detail}")
-        return r.json().get("data") if r.content else None
+        body = self.request("PUT", path, data=data)
+        return body.get("data") if isinstance(body, dict) else None
 
-    def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+    def get(self, path: str, params: dict[str, Any] | None = None) -> Any:  # type: ignore[override]
         """GETs an API path and returns its `data`."""
-        # A node busy for a moment: a read is tried once more, after a pause.
-        for attempt in range(2):
-            try:
-                r = self.http.get(path, params=params)
-                break
-            except httpx.ConnectError as e:
-                raise PluginError(f"cannot connect to {self.base}") from e
-            except httpx.TimeoutException as e:
-                if attempt == 0:
-                    log.info("%s did not answer %s in time, trying again", self.base, path)
-                    time.sleep(RETRY_PAUSE_S)
-                    continue
-                raise PluginError(f"{self.base} did not answer in time") from e
-            except httpx.HTTPError as e:
-                raise PluginError(f"request to {self.base} failed ({type(e).__name__})") from e
-        if r.status_code == 401:
-            raise PluginError(
-                "Proxmox VE rejected the API token: check the token ID "
-                "(user@realm!name) and its secret"
-            )
-        if r.status_code == 403:
-            raise Forbidden(path)
-        if r.status_code in (404, 501):
-            raise NotFound(path)
-        if r.status_code >= 400:
-            raise Unavailable(f"{path}: HTTP {r.status_code} {r.reason_phrase}".strip())
-        try:
-            body = r.json()
-        except json.JSONDecodeError as e:
-            raise PluginError(
-                f"{self.base} did not answer with JSON: is it the Proxmox VE address?"
-            ) from e
+        body = self.request("GET", path, params=params)
         if not isinstance(body, dict) or "data" not in body:
             raise PluginError(f"{self.base} does not look like Proxmox VE (no API data)")
         return body["data"]

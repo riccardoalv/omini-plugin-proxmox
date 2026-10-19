@@ -220,18 +220,42 @@ def test_a_link_change_needs_the_network_role(writable, cfg):
         collect_module.apply(cfg, off)
 
 
-def test_a_link_change_not_applied_is_said(writable, cfg):
+def test_a_link_change_not_applied_is_said(writable, cfg, pauses):
     inner = writable.handler
+    sent = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "PUT":
+            sent.append(body_of(request))
             return httpx.Response(200, json={"data": None})  # accepted, not kept
         return inner(request)
 
     collect_module.Client.keywords["transport"] = httpx.MockTransport(handler)
     off = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net0", value=False)
-    with pytest.raises(PluginError, match="did not apply the change to net0"):
+    with pytest.raises(
+        PluginError, match=r"did not apply the change to net0: .* within 30 s \(undone\)$"
+    ):
         collect_module.apply(cfg, off)
+    # Read again every 2 s for 30 s, then put back as it was.
+    assert pauses == [collect_module.POLL_S] * 15
+    assert sent[-1] == {"net0": "virtio=BC:24:11:AA:00:01,bridge=vmbr0,firewall=1"}
+
+
+def test_a_refused_change_is_not_undone(writable, cfg):
+    inner = writable.handler
+    sent = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PUT":
+            sent.append(body_of(request))
+            return httpx.Response(400, json={"data": None, "errors": {"net0": "invalid format"}})
+        return inner(request)
+
+    collect_module.Client.keywords["transport"] = httpx.MockTransport(handler)
+    off = Change(device="bc:24:11:aa:00:01", kind="port.enabled", port="net0", value=False)
+    with pytest.raises(PluginError, match=r"refused the change: net0: invalid format$"):
+        collect_module.apply(cfg, off)
+    assert len(sent) == 1
 
 
 @pytest.mark.parametrize("value", [None, "off", 0, {"enabled": False}])

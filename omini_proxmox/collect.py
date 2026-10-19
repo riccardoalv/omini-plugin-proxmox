@@ -25,6 +25,9 @@ from omini_sdk import (
     Storage,
     log,
 )
+from omini_sdk import optional as sdk_optional
+from omini_sdk.changes import Failed, apply_verify
+from omini_sdk.http import settings
 
 from omini_proxmox.client import Client, Forbidden, NotFound, Unavailable, segment
 
@@ -54,8 +57,7 @@ def client_from(cfg: Config) -> Client:
         url,
         token_id.strip(),
         secret.strip(),
-        verify_tls=cfg.bool("verify_tls", False),
-        timeout=wait_s(cfg),
+        **{**settings(cfg), "timeout": wait_s(cfg)},
     )
 
 
@@ -174,24 +176,21 @@ def plain_ips(cidrs: list[str]) -> list[str]:
 def optional(
     what: str, missing: list[str], fn: Callable[[], T], default: T, report: bool = True
 ) -> T:
-    """Optional data: a missing privilege or feature never fails the collection."""
-    try:
-        return fn()
-    except Forbidden:
-        if report:
-            log.warning("no privilege for %s (%s)", what, PRIVILEGES.get(what, what))
-            missing.append(PRIVILEGES.get(what, what))
-        else:
-            log.info("no privilege for %s", what)
-    except NotFound:
-        log.info("%s not available on this Proxmox VE", what)
-    except Unavailable as e:
-        log.info("%s not available: %s", what, e)
-    except PluginError:
-        raise
-    except Exception:
-        log.exception("could not read %s", what)
-    return default
+    """Optional data: a missing privilege or feature never fails the
+    collection; a missing privilege is reported (by where PVEAuditor goes)
+    unless ``report`` is off."""
+    denied: list[str] = []
+    out = sdk_optional(what, fn, default, missing=denied)
+    if denied and report:
+        log.warning("no privilege for %s (%s)", what, PRIVILEGES.get(what, what))
+        missing.append(PRIVILEGES.get(what, what))
+    return out
+
+
+def unreachable(e: Unavailable) -> bool:
+    """Whether the API was not reached at all (refused connection, timeout),
+    rather than answering an error for one path."""
+    return e.status is None
 
 
 # --- nodes -----------------------------------------------------------------
@@ -720,7 +719,11 @@ def node_devices(
 def read_version(c: Client) -> dict[str, Any]:
     try:
         version = c.get("/version")
-    except (NotFound, Forbidden, Unavailable) as e:
+    except Unavailable as e:
+        if unreachable(e):
+            raise
+        raise PluginError(f"{c.base} does not look like Proxmox VE (no version API)") from e
+    except (NotFound, Forbidden) as e:
         raise PluginError(f"{c.base} does not look like Proxmox VE (no version API)") from e
     if not isinstance(version, dict):
         raise PluginError(f"{c.base} does not look like Proxmox VE (no version API)")
@@ -731,7 +734,11 @@ def cluster_nodes(c: Client, missing: list[str]) -> tuple[list[dict[str, Any]], 
     """The nodes (one for a single host) and the address of each one."""
     try:
         nodes = c.get("/nodes")
-    except (NotFound, Forbidden, Unavailable) as e:
+    except Unavailable as e:
+        if unreachable(e):
+            raise
+        raise PluginError(f"could not list the nodes of {c.base}") from e
+    except (NotFound, Forbidden) as e:
         raise PluginError(f"could not list the nodes of {c.base}") from e
     members = optional("node", missing, lambda: c.get("/cluster/status"), []) or []
     ips = {
@@ -944,8 +951,10 @@ def change_read(c: Client, path: str) -> Any:
         return c.get(path)
     except Forbidden as e:
         raise PluginError(CHANGE_ROLE) from e
-    except (NotFound, Unavailable) as e:
-        raise PluginError(f"could not read {e} from Proxmox VE") from e
+    except NotFound as e:
+        raise PluginError(f"could not read {e.resource} from Proxmox VE") from e
+    except Unavailable as e:
+        raise PluginError(f"could not read {e.resource} from Proxmox VE ({e})") from e
 
 
 def same_nic(value: Any, wanted: str) -> bool:
@@ -976,25 +985,52 @@ def with_link(value: str, enabled: bool) -> str:
     return ",".join(parts)
 
 
+# How long a change waits for Proxmox VE to show it (the SDK's window).
+VERIFY_S = 30
+POLL_S = 2
+
+
 def put_nic(c: Client, base: str, port: str, current: str, wanted: str) -> None:
-    """PUT a NIC's new property string, then read the config again to check it."""
+    """PUT a NIC's new property string, then read the config again until it
+    has it; one it does not show is put back as it was."""
     if wanted == current:
         return
-    try:
-        c.put(base + "/config", {port: wanted})
-    except Forbidden as e:
-        raise PluginError(CHANGE_ROLE) from e
-    # Proxmox VE prints a NIC back in its own key order (a container's
-    # type=veth last): the options are compared, not the text.
-    after = change_read(c, base + "/config") or {}
-    if not same_nic(after.get(port), wanted):
+    path = base + "/config"
+    restart: list[bool] = []
+
+    def verify() -> bool:
+        try:
+            after = c.get(path) or {}
+        except Forbidden as e:
+            raise Failed(CHANGE_ROLE) from e
+        # Proxmox VE prints a NIC back in its own key order (a container's
+        # type=veth last): the options are compared, not the text.
+        if same_nic(after.get(port), wanted):
+            return True
         pending = optional("guests", [], lambda: c.get(base + "/pending"), []) or []
         if any(p.get("key") == port and same_nic(p.get("pending"), wanted) for p in pending):
-            raise PluginError(
-                f"saved, but {port} changes only when the guest restarts "
-                "(network hotplug is off for it)"
-            )
-        raise PluginError(f"Proxmox VE did not apply the change to {port}")
+            restart.append(True)  # saved: kept for the guest's next start
+            return True
+        return False
+
+    try:
+        apply_verify(
+            lambda: c.put(path, {port: wanted}),
+            verify,
+            undo=lambda: c.put(path, {port: current}),
+            timeout=VERIFY_S,
+            interval=POLL_S,
+            message=f"Proxmox VE did not apply the change to {port}",
+            check_in="in Proxmox VE",
+            undo_failed_apply=False,  # one PUT: all or nothing
+        )
+    except Forbidden as e:
+        raise PluginError(CHANGE_ROLE) from e
+    if restart:
+        raise PluginError(
+            f"saved, but {port} changes only when the guest restarts "
+            "(network hotplug is off for it)"
+        )
 
 
 def apply(cfg: Config, change: Any) -> list[Device]:

@@ -46,7 +46,7 @@ fields:
     help: Proxmox VE uses a self-signed certificate by default; turn this on if yours is trusted.
   - key: timeout_s
     type: int
-    label: Wait for an answer (seconds)
+    label: Timeout (seconds)
     default: 30
     group: Advanced
-    help: How long to wait for each answer of the API (5 to 120). A busy node can be slow; raise it if the integration says Proxmox VE did not answer in time.
+    help: How long to wait for each answer of the API (5 to 120). A busy node can be slow; raise it if the integration says Proxmox VE did not answer in time. A refused connection or a busy node is asked again.
